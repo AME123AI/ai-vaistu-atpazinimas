@@ -1,0 +1,2 @@
+model,n_images,n_classes,train_images,test_images,accuracy,macro_precision,macro_recall,macro_f1
+HOG + Logistic Regression,170,24,146,24,0.625,0.5694444444444444,0.6388888888888888,0.5685185185185184

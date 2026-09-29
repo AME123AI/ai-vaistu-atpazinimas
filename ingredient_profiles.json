@@ -1,0 +1,162 @@
+{
+  "acetylsalicylic acid": {
+    "group": "antitrombocitinis vaistas / NVNU",
+    "effect": "Slopina trombocitų agregaciją; taip pat turi analgetinį ir priešuždegiminį poveikį."
+  },
+  "celecoxib": {
+    "group": "selektyvus COX-2 inhibitorius (NVNU)",
+    "effect": "Slopina COX-2 ir mažina prostaglandinų susidarymą, todėl mažina skausmą ir uždegimą."
+  },
+  "candesartan cilexetil": {
+    "group": "angiotenzino II receptorių blokatorius",
+    "effect": "Blokuoja angiotenzino II poveikį kraujagyslėms ir mažina kraujospūdį."
+  },
+  "hydrochlorothiazide": {
+    "group": "tiazidinis diuretikas",
+    "effect": "Didina natrio ir vandens pasišalinimą per inkstus ir mažina kraujospūdį."
+  },
+  "fluconazole": {
+    "group": "priešgrybelinis azolas",
+    "effect": "Slopina grybelių ergosterolio sintezę; taip pat gali slopinti kai kuriuos CYP fermentus."
+  },
+  "miconazole": {
+    "group": "priešgrybelinis azolas",
+    "effect": "Trikdo grybelių membranai būtino ergosterolio sintezę; geriamojo gelio miconazole gali būti sistemiškai absorbuojamas."
+  },
+  "rosuvastatin": {
+    "group": "statinas",
+    "effect": "Slopina HMG-CoA reduktazę ir mažina LDL cholesterolio koncentraciją."
+  },
+  "metoprolol succinate": {
+    "group": "beta-1 adrenoblokatorius",
+    "effect": "Mažina širdies susitraukimų dažnį, širdies darbą ir kraujospūdį."
+  },
+  "prednisolone": {
+    "group": "kortikosteroidas",
+    "effect": "Slopina uždegiminį ir imuninį atsaką."
+  },
+  "fluticasone propionate": {
+    "group": "įkvepiamasis kortikosteroidas",
+    "effect": "Slopina kvėpavimo takų uždegimą."
+  },
+  "paracetamol": {
+    "group": "analgetikas ir antipiretikas",
+    "effect": "Mažina skausmą ir karščiavimą, daugiausia veikdamas centrinėje nervų sistemoje."
+  },
+  "hydroxocobalamin": {
+    "group": "vitamino B12 forma",
+    "effect": "Vitamino B12 forma, svarbi kraujodarai ir normaliai nervų sistemos veiklai."
+  },
+  "fusidic acid": {
+    "group": "antibiotikas",
+    "effect": "Slopina bakterijų baltymų sintezę."
+  },
+  "povidone-iodine": {
+    "group": "antiseptikas",
+    "effect": "Išskiria jodą, kuris pažeidžia mikroorganizmų struktūras."
+  },
+  "permethrin": {
+    "group": "vietinis antiparazitinis preparatas",
+    "effect": "Veikia parazitų nervų ląstelių natrio kanalus."
+  },
+  "iron": {
+    "group": "mineralas",
+    "effect": "Būtinas hemoglobino gamybai ir deguonies pernešimui."
+  },
+  "folic acid": {
+    "group": "vitaminas B9",
+    "effect": "Dalyvauja DNR sintezėje ir kraujo ląstelių susidaryme."
+  },
+  "vitamin B12": {
+    "group": "vitaminas B12",
+    "effect": "Svarbus nervų sistemai, DNR sintezei ir raudonųjų kraujo kūnelių susidarymui."
+  },
+  "vitamin B6": {
+    "group": "vitaminas B6",
+    "effect": "Dalyvauja aminorūgščių apykaitoje ir neurotransmiterių sintezėje."
+  },
+  "benfotiamine": {
+    "group": "vitamino B1 darinys",
+    "effect": "Tiamino darinys, prisidedantis prie vitamino B1 funkcijų ir angliavandenių apykaitos."
+  },
+  "alpha chymotrypsin": {
+    "group": "proteolitinis fermentas",
+    "effect": "Baltymus skaidantis fermentas."
+  },
+  "trypsin": {
+    "group": "proteolitinis fermentas",
+    "effect": "Baltymus skaidantis fermentas."
+  },
+  "micronized purified flavonoid fraction": {
+    "group": "flavonoidų frakcija",
+    "effect": "Venoaktyvių flavonoidų preparato komponentas."
+  },
+  "betamethasone": {
+    "group": "kortikosteroidas",
+    "effect": "Slopina uždegiminį ir imuninį atsaką; Fucicort vartojamas vietiškai."
+  },
+  "hydrocortisone": {
+    "group": "kortikosteroidas",
+    "effect": "Slopina uždegimą ir imuninį atsaką."
+  },
+  "cinchocaine hydrochloride": {
+    "group": "vietinis anestetikas",
+    "effect": "Blokuoja nervinių impulsų perdavimą vartojimo vietoje."
+  },
+  "ascorbic acid": {
+    "group": "vitaminas C",
+    "effect": "Antioksidantas, dalyvaujantis kolageno sintezėje ir geležies pasisavinime."
+  },
+  "zinc": {
+    "group": "mineralas",
+    "effect": "Svarbus imuninei funkcijai, fermentams ir audinių atsinaujinimui."
+  },
+  "copper": {
+    "group": "mineralas",
+    "effect": "Dalyvauja geležies apykaitoje ir fermentų veikloje."
+  },
+  "vitamin A": {
+    "group": "vitaminas A",
+    "effect": "Svarbus regėjimui, imuninei sistemai ir ląstelių diferenciacijai."
+  },
+  "vitamin D3": {
+    "group": "vitaminas D",
+    "effect": "Reguliuoja kalcio ir fosforo apykaitą."
+  },
+  "vitamin E": {
+    "group": "vitaminas E",
+    "effect": "Antioksidantas, padedantis apsaugoti ląsteles nuo oksidacinio poveikio."
+  },
+  "vitamin B1": {
+    "group": "vitaminas B1",
+    "effect": "Dalyvauja angliavandenių apykaitoje ir nervų sistemos veikloje."
+  },
+  "vitamin B2": {
+    "group": "vitaminas B2",
+    "effect": "Dalyvauja energijos gamybos ir oksidacijos-redukcijos procesuose."
+  },
+  "biotin": {
+    "group": "vitaminas B7",
+    "effect": "Dalyvauja riebalų, angliavandenių ir aminorūgščių apykaitoje."
+  },
+  "calcium pantothenate": {
+    "group": "vitamino B5 šaltinis",
+    "effect": "Pantoteno rūgštis dalyvauja kofermento A ir medžiagų apykaitos procesuose."
+  },
+  "nicotinamide": {
+    "group": "vitamino B3 forma",
+    "effect": "Dalyvauja NAD/NADP kofermentų susidaryme ir energijos apykaitoje."
+  },
+  "calcium": {
+    "group": "mineralas",
+    "effect": "Svarbus kaulams, raumenų susitraukimui ir nervinių signalų perdavimui."
+  },
+  "potassium": {
+    "group": "mineralas / elektrolitas",
+    "effect": "Svarbus nerviniams impulsams, raumenų ir širdies veiklai."
+  },
+  "manganese": {
+    "group": "mikroelementas",
+    "effect": "Dalyvauja fermentų veikloje ir medžiagų apykaitoje."
+  }
+}

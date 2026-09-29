@@ -1,0 +1,203 @@
+{
+  "Aggrex": {
+    "ingredients": [
+      "acetylsalicylic acid"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "Alphintern": {
+    "ingredients": [
+      "trypsin",
+      "alpha chymotrypsin"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "BETADINE": {
+    "ingredients": [
+      "povidone-iodine"
+    ],
+    "routes": [
+      "vietinis"
+    ]
+  },
+  "C Zinc": {
+    "ingredients": [
+      "zinc"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "CELEBREX": {
+    "ingredients": [
+      "celecoxib"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "CEMICRESTO": {
+    "ingredients": [],
+    "routes": []
+  },
+  "CHOLEROSE": {
+    "ingredients": [],
+    "routes": []
+  },
+  "Candalkan": {
+    "ingredients": [
+      "candesartan cilexetil",
+      "hydrochlorothiazide"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "DEPOFORT B12": {
+    "ingredients": [
+      "hydroxocobalamin"
+    ],
+    "routes": [
+      "leidžiamas į raumenis"
+    ]
+  },
+  "DIFLUCAN": {
+    "ingredients": [
+      "fluconazole"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "Daflon": {
+    "ingredients": [
+      "micronized purified flavonoid fraction"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "Daktarin": {
+    "ingredients": [
+      "miconazole"
+    ],
+    "routes": [
+      "burnos gelis"
+    ]
+  },
+  "Ectomethrin": {
+    "ingredients": [
+      "permethrin"
+    ],
+    "routes": [
+      "vietinis"
+    ]
+  },
+  "Feroglobin": {
+    "ingredients": [
+      "iron",
+      "vitamin B12",
+      "folic acid"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "Flixotide": {
+    "ingredients": [
+      "fluticasone propionate"
+    ],
+    "routes": [
+      "įkvepiamasis"
+    ]
+  },
+  "Fucicort": {
+    "ingredients": [
+      "fusidic acid",
+      "betamethasone"
+    ],
+    "routes": [
+      "vietinis"
+    ]
+  },
+  "Fucidin": {
+    "ingredients": [
+      "fusidic acid"
+    ],
+    "routes": [
+      "vietinis"
+    ]
+  },
+  "Milga": {
+    "ingredients": [
+      "benfotiamine",
+      "vitamin B6",
+      "vitamin B12"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "Paramol": {
+    "ingredients": [
+      "paracetamol"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "Sediproct": {
+    "ingredients": [
+      "hydrocortisone",
+      "cinchocaine hydrochloride"
+    ],
+    "routes": [
+      "vietinis"
+    ]
+  },
+  "SelokenZOC": {
+    "ingredients": [
+      "metoprolol succinate"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "Supravit": {
+    "ingredients": [
+      "vitamin A",
+      "vitamin D3",
+      "vitamin E",
+      "vitamin B1",
+      "vitamin B2",
+      "vitamin B6",
+      "vitamin B12",
+      "biotin",
+      "calcium pantothenate",
+      "nicotinamide",
+      "folic acid",
+      "ascorbic acid",
+      "zinc",
+      "iron",
+      "copper",
+      "manganese",
+      "calcium",
+      "potassium"
+    ],
+    "routes": [
+      "geriamasis"
+    ]
+  },
+  "Xilone Forte": {
+    "ingredients": [],
+    "routes": []
+  },
+  "Zenta": {
+    "ingredients": [],
+    "routes": []
+  }
+}
