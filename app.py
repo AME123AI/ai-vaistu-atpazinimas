@@ -606,14 +606,26 @@ def run_fast_ocr(image):
 def run_fallback_ocr(image, fast_text=""):
     """
     Papildomas OCR naudojamas tik tada,
-    kai greitas OCR nedavė tinkamo VVKT kandidato.
+    kai greitas OCR nerado tinkamo VVKT kandidato.
+
+    Fallback:
+    - sutvarko telefono orientaciją;
+    - tikrina 0 / 90 / 180 / 270 laipsnių kryptis;
+    - naudoja sustiprintą kontrastą;
+    - papildomai naudoja paryškintą vaizdą;
+    - bando PSM 11 ir PSM 6.
     """
+
     base = prepare_fast_ocr_image(image)
 
     texts = []
 
     if fast_text:
         texts.append(fast_text)
+
+    # -------------------------------------------------
+    # 1. ORIENTACIJOS
+    # -------------------------------------------------
 
     for angle in (0, 90, 180, 270):
 
@@ -622,14 +634,19 @@ def run_fallback_ocr(image, fast_text=""):
             expand=True
         )
 
-        gray = ImageOps.grayscale(rotated)
+        gray = ImageOps.grayscale(
+            rotated
+        )
 
-        processed = ImageOps.autocontrast(gray)
+        processed = ImageOps.autocontrast(
+            gray
+        )
 
         processed = ImageEnhance.Contrast(
             processed
-        ).enhance(1.6)
+        ).enhance(1.8)
 
+        # PSM 11 gerai tinka išmėtytam tekstui ant pakuotės.
         try:
             text = pytesseract.image_to_string(
                 processed,
@@ -640,13 +657,61 @@ def run_fallback_ocr(image, fast_text=""):
                 texts.append(text)
 
         except Exception:
-            continue
+            pass
 
-    unique_texts = list(
-        dict.fromkeys(texts)
+    # -------------------------------------------------
+    # 2. PAPILDOMAS BANDYMAS NORMALIA ORIENTACIJA
+    # -------------------------------------------------
+    # Jei prekės pavadinimas yra didesnis ir išdėstytas
+    # kaip vientisas teksto blokas, PSM 6 kartais jį
+    # perskaito geriau nei PSM 11.
+    #
+    # Šito nedarome visoms 4 orientacijoms, kad OCR
+    # vėl netaptų labai lėtas.
+
+    gray = ImageOps.grayscale(
+        base
     )
 
-    return "\n".join(unique_texts)
+    block_image = ImageOps.autocontrast(
+        gray
+    )
+
+    block_image = ImageEnhance.Contrast(
+        block_image
+    ).enhance(2.0)
+
+    block_image = ImageEnhance.Sharpness(
+        block_image
+    ).enhance(1.8)
+
+    try:
+        text = pytesseract.image_to_string(
+            block_image,
+            config="--psm 6"
+        ).strip()
+
+        if text:
+            texts.append(text)
+
+    except Exception:
+        pass
+
+    # -------------------------------------------------
+    # PAŠALINAME PASIKARTOJANTĮ OCR TEKSTĄ
+    # -------------------------------------------------
+
+    unique_texts = list(
+        dict.fromkeys(
+            text
+            for text in texts
+            if text
+        )
+    )
+
+    return "\n".join(
+        unique_texts
+    )
 
 
 def run_ocr(image):
