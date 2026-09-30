@@ -163,29 +163,70 @@ if uploaded:
             else "Teksto atpažinti nepavyko."
         )
 
-    ocr_lines = [
-        line.strip()
-        for line in ocr_text.splitlines()
-        if len(line.strip()) >= 4
-    ]
+      # =====================================================
+    # OCR TEKSTO PALYGINIMAS SU VVKT PREPARATŲ PAVADINIMAIS
+    # =====================================================
 
-    ocr_suggestions = []
+    ocr_text_lower = ocr_text.lower()
 
-    for line in ocr_lines:
+    # 1. Pirmiausia ieškome tikslaus VVKT preparato
+    # pavadinimo visame OCR tekste.
+    exact_matches = []
 
-        name_matches = get_close_matches(
-            line,
-            vvkt_names,
-            n=5,
-            cutoff=0.55
+    for name in vvkt_names:
+        if name.lower() in ocr_text_lower:
+            exact_matches.append(name)
+
+    # Ilgesni pavadinimai laikomi specifiškesniais.
+    exact_matches = sorted(
+        exact_matches,
+        key=len,
+        reverse=True
+    )
+
+    ocr_suggestions = exact_matches.copy()
+
+    # 2. Jei tikslaus pavadinimo OCR tekste neradome,
+    # naudojame fuzzy paiešką.
+    if not ocr_suggestions:
+
+        ocr_lines = [
+            line.strip()
+            for line in ocr_text.splitlines()
+            if len(line.strip()) >= 4
+        ]
+
+        fuzzy_matches = []
+
+        for line in ocr_lines:
+
+            # Tikriname ne tik visą OCR eilutę,
+            # bet ir atskirus jos žodžius.
+            search_parts = [line]
+
+            search_parts.extend(
+                word
+                for word in line.split()
+                if len(word) >= 4
+            )
+
+            for part in search_parts:
+
+                matches = get_close_matches(
+                    part,
+                    vvkt_names,
+                    n=5,
+                    cutoff=0.70
+                )
+
+                fuzzy_matches.extend(matches)
+
+        ocr_suggestions = list(
+            dict.fromkeys(fuzzy_matches)
         )
 
-        ocr_suggestions.extend(name_matches)
-
-    # Pašaliname pasikartojimus
-    ocr_suggestions = list(
-        dict.fromkeys(ocr_suggestions)
-    )
+    # Rodome ne daugiau kaip 10 pasiūlymų.
+    ocr_suggestions = ocr_suggestions[:10]
 
 
     if ocr_suggestions:
