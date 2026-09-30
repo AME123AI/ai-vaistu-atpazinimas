@@ -55,9 +55,11 @@ uploaded = st.file_uploader("Vaisto pakuotės nuotrauka", type=["jpg","jpeg","pn
 if "first_drug" not in st.session_state:
     st.session_state.first_drug = None
 
-if uploaded:
+
+  if uploaded:
     image = Image.open(uploaded).convert("RGB")
     ocr_text = pytesseract.image_to_string(image)
+
     ocr_lines = [
         line.strip()
         for line in ocr_text.splitlines()
@@ -76,7 +78,14 @@ if uploaded:
         ocr_suggestions.extend(name_matches)
 
     ocr_suggestions = list(dict.fromkeys(ocr_suggestions))
-        if ocr_suggestions:
+
+    with st.expander("🔤 OCR nuskaitytas tekstas"):
+        st.text(
+            ocr_text if ocr_text.strip()
+            else "Teksto atpažinti nepavyko."
+        )
+
+    if ocr_suggestions:
         st.markdown("### 🔎 OCR pasiūlyti VVKT preparatai")
         ocr_selected = st.selectbox(
             "Pasirinkite labiausiai atitinkantį preparatą",
@@ -84,6 +93,53 @@ if uploaded:
             key="ocr_vvkt_match"
         )
     else:
+        st.info(
+            "OCR tekste nepavyko rasti pakankamai panašaus "
+            "VVKT preparato pavadinimo."
+        )
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.image(
+            image,
+            caption="Įkelta pakuotė",
+            use_container_width=True
+        )
+
+    with c2:
+        arr = np.asarray(
+            image.convert("L").resize((128, 128)),
+            dtype=np.float32
+        ) / 255.0
+
+        features = hog(
+            arr,
+            orientations=9,
+            pixels_per_cell=(8, 8),
+            cells_per_block=(2, 2),
+            block_norm="L2-Hys",
+            transform_sqrt=True,
+            feature_vector=True
+        ).reshape(1, -1)
+
+        probs = model.predict_proba(features)[0]
+        top = np.argsort(probs)[::-1][:3]
+
+        st.markdown("### 🤖 2. AI modelis atpažins vaistą")
+
+        for i, idx in enumerate(top, 1):
+            st.write(
+                f"**{i}. {model.classes_[idx]}** — "
+                f"{probs[idx] * 100:.1f}% modelio tikimybės įvertis"
+            )
+
+        suggested = model.classes_[top[0]]
+
+        if st.button("Patvirtinti Top-1"):
+            st.session_state.first_drug = suggested
+
+st.divider()
         st.info("OCR tekste nepavyko rasti pakankamai panašaus VVKT preparato pavadinimo.")
     with st.expander("🔤 OCR nuskaitytas tekstas"):
         st.text(ocr_text if ocr_text.strip() else "Teksto atpažinti nepavyko.")
