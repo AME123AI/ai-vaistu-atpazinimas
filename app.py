@@ -1925,13 +1925,34 @@ if uploaded:
         "Analizuojama pakuotė..."
     ):
 
-        ocr_text = run_ocr(image)
+           # 1 etapas – greitas OCR
+    fast_ocr_text = run_fast_ocr(
+        image
+    )
 
-        ranked_candidates = (
-            rank_vvkt_candidates(
-                ocr_text,
-                top_n=5
-            )
+    fast_candidates = rank_vvkt_candidates(
+        fast_ocr_text,
+        top_n=5
+    )
+
+    # Jei greitas OCR jau rado VVKT kandidatą,
+    # papildomo OCR nereikia.
+    if fast_candidates:
+        ocr_text = fast_ocr_text
+        ranked_candidates = fast_candidates
+
+    else:
+        # 2 etapas – papildomas OCR
+        fallback_text = run_fallback_ocr(
+            image,
+            fast_text=fast_ocr_text
+        )
+
+        ocr_text = fallback_text
+
+        ranked_candidates = rank_vvkt_candidates(
+            ocr_text,
+            top_n=5
         )
 
     strengths = extract_strengths(
