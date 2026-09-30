@@ -58,7 +58,33 @@ if "first_drug" not in st.session_state:
 if uploaded:
     image = Image.open(uploaded).convert("RGB")
     ocr_text = pytesseract.image_to_string(image)
+    ocr_lines = [
+        line.strip()
+        for line in ocr_text.splitlines()
+        if len(line.strip()) >= 4
+    ]
 
+    ocr_suggestions = []
+
+    for line in ocr_lines:
+        name_matches = get_close_matches(
+            line,
+            vvkt_names,
+            n=5,
+            cutoff=0.55
+        )
+        ocr_suggestions.extend(name_matches)
+
+    ocr_suggestions = list(dict.fromkeys(ocr_suggestions))
+        if ocr_suggestions:
+        st.markdown("### 🔎 OCR pasiūlyti VVKT preparatai")
+        ocr_selected = st.selectbox(
+            "Pasirinkite labiausiai atitinkantį preparatą",
+            ocr_suggestions,
+            key="ocr_vvkt_match"
+        )
+    else:
+        st.info("OCR tekste nepavyko rasti pakankamai panašaus VVKT preparato pavadinimo.")
     with st.expander("🔤 OCR nuskaitytas tekstas"):
         st.text(ocr_text if ocr_text.strip() else "Teksto atpažinti nepavyko.")
     c1,c2 = st.columns(2)
