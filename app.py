@@ -8,6 +8,7 @@ import streamlit as st
 from PIL import Image
 from skimage.feature import hog
 from difflib import get_close_matches
+import pytesseract
 ROOT = Path(__file__).parent
 st.set_page_config(page_title="AI vaistų atpažinimas", page_icon="💊", layout="wide")
 
@@ -56,6 +57,9 @@ if "first_drug" not in st.session_state:
 
 if uploaded:
     image = Image.open(uploaded).convert("RGB")
+        ocr_text = pytesseract.image_to_string(image)
+    with st.expander("🔤 OCR nuskaitytas tekstas"):
+        st.text(ocr_text if ocr_text.strip() else "Teksto atpažinti nepavyko.")
     c1,c2 = st.columns(2)
     with c1:
         st.image(image, caption="Įkelta pakuotė", use_container_width=True)
