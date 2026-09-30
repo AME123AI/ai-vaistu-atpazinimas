@@ -2029,7 +2029,12 @@ if uploaded:
     detected_ingredient = detect_ingredient(
         ocr_text
     )
-
+    with st.expander("🔍 OCR perskaitytas tekstas"):
+        st.text(
+            ocr_text
+            if ocr_text
+            else "OCR teksto neaptiko."
+        )
     st.markdown(
         "#### 🧾 Iš pakuotės aptikta informacija"
     )
