@@ -582,276 +582,69 @@ def get_ingredient_group(ingredient):
     return None
 
 
-        # =================================================
-        # GRUPIŲ SĄVEIKOS TAISYKLĖ
-        # =================================================
+        # =========================================================
+# GRUPIŲ SĄVEIKOS
+# =========================================================
 
-        group_rule = find_group_interaction(
-            ingredient_1,
-            ingredient_2
+def find_group_interaction(
+    ingredient_1,
+    ingredient_2
+):
+
+    if interaction_rules.empty:
+        return None
+
+    group_1 = get_ingredient_group(
+        ingredient_1
+    )
+
+    group_2 = get_ingredient_group(
+        ingredient_2
+    )
+
+    if not group_1 or not group_2:
+        return None
+
+    group_1_norm = normalize_text(
+        group_1
+    )
+
+    group_2_norm = normalize_text(
+        group_2
+    )
+
+    for _, row in interaction_rules.iterrows():
+
+        rule_group_a = normalize_text(
+            row.get("group_a")
         )
 
-        group_1 = get_ingredient_group(
-            ingredient_1
+        rule_group_b = normalize_text(
+            row.get("group_b")
         )
 
-        group_2 = get_ingredient_group(
-            ingredient_2
+        direct_match = (
+            group_1_norm == rule_group_a
+            and
+            group_2_norm == rule_group_b
         )
 
-        # =================================================
-        # RODOME ATPAŽINTAS FARMAKOLOGINES GRUPES
-        # =================================================
-
-        st.markdown(
-            "### 🧬 Farmakologinės grupės"
+        reverse_match = (
+            group_1_norm == rule_group_b
+            and
+            group_2_norm == rule_group_a
         )
 
-        col_group_1, col_group_2 = st.columns(2)
+        if direct_match or reverse_match:
 
-        with col_group_1:
+            result = row.to_dict()
 
-            st.markdown(
-                f"**{first}**"
-            )
+            result["detected_group_1"] = group_1
+            result["detected_group_2"] = group_2
 
-            if group_1:
+            return result
 
-                st.write(
-                    group_1
-                )
-
-            else:
-
-                st.caption(
-                    "Farmakologinė grupė šiame "
-                    "prototipe automatiškai "
-                    "nenustatyta."
-                )
-
-        with col_group_2:
-
-            st.markdown(
-                f"**{second}**"
-            )
-
-            if group_2:
-
-                st.write(
-                    group_2
-                )
-
-            else:
-
-                st.caption(
-                    "Farmakologinė grupė šiame "
-                    "prototipe automatiškai "
-                    "nenustatyta."
-                )
-
-        # =================================================
-        # JEI RASTA PATVIRTINTA GRUPINĖ TAISYKLĖ
-        # =================================================
-
-        if group_rule is not None:
-
-            st.markdown(
-                "### ⚠️ Galima farmakologinė sąveika"
-            )
-
-            interaction_text = clean_value(
-                group_rule.get(
-                    "interaction"
-                )
-            )
-
-            st.warning(
-                interaction_text
-            )
-
-            st.markdown(
-                "#### Galimas poveikis / rizika"
-            )
-
-            effect_text = clean_value(
-                group_rule.get(
-                    "effect"
-                )
-            )
-
-            st.write(
-                effect_text
-            )
-
-            st.markdown(
-                "#### 📋 Išvada"
-            )
-
-            conclusion_text = clean_value(
-                group_rule.get(
-                    "conclusion"
-                )
-            )
-
-            st.error(
-                conclusion_text
-            )
-
-            source = clean_value(
-                group_rule.get(
-                    "source"
-                )
-            )
-
-            if source != "—":
-
-                st.markdown(
-                    "#### 📚 Sąveikos taisyklės šaltinis"
-                )
-
-                st.write(
-                    source
-                )
-
-        # =================================================
-        # JEI PATVIRTINTOS GRUPINĖS TAISYKLĖS NĖRA
-        # =================================================
-
-        else:
-
-            st.markdown(
-                "### ℹ️ Sąveikos vertinimas"
-            )
-
-            if group_1 and group_2:
-
-                st.info(
-                    "Abiejų preparatų farmakologinės "
-                    "grupės šiame prototipe nustatytos, "
-                    "tačiau šiai grupių porai "
-                    "patvirtinta sąveikos taisyklė "
-                    "dar neįtraukta. "
-                    "Tai nėra išvada, kad preparatus "
-                    "saugu vartoti kartu."
-                )
-
-            elif group_1 or group_2:
-
-                st.info(
-                    "Pavyko nustatyti tik vieno iš "
-                    "preparatų farmakologinę grupę. "
-                    "Todėl patikima automatinė "
-                    "grupių sąveikos taisyklė "
-                    "negali būti pritaikyta. "
-                    "Tai nėra išvada, kad preparatus "
-                    "saugu vartoti kartu."
-                )
-
-            else:
-
-                st.info(
-                    "Šių veikliųjų medžiagų "
-                    "farmakologinių grupių prototipas "
-                    "automatiškai nenustatė. "
-                    "Todėl automatinė sąveikos "
-                    "taisyklė nepateikiama. "
-                    "Tai nėra išvada, kad preparatus "
-                    "saugu vartoti kartu."
-                )
-
-            st.caption(
-                "Prototipas pateikia tik į jo "
-                "patikrintą taisyklių bazę "
-                "įtrauktas farmakologines sąveikas. "
-                "Individualų vaistų derinį reikia "
-                "vertinti pagal oficialias preparatų "
-                "charakteristikų santraukas ir "
-                "sveikatos priežiūros specialisto "
-                "rekomendacijas."
-            )
-
-        # =================================================
-        # VARTOJIMO BŪDAS
-        # =================================================
-
-        st.markdown(
-            "### 💉 Vartojimo būdas"
-        )
-
-        if first_row is not None:
-
-            st.write(
-                f"**{first}:**",
-                clean_value(
-                    first_row.get(
-                        "vartojimo_budas"
-                    )
-                )
-            )
-
-        if second_row is not None:
-
-            st.write(
-                f"**{second}:**",
-                clean_value(
-                    second_row.get(
-                        "vartojimo_budas"
-                    )
-                )
-            )
-
-        # =================================================
-        # FARMAKOLOGINIŲ PROFILIŲ ŠALTINIAI
-        # =================================================
-
-        st.markdown(
-            "### 📚 Farmakologinių profilių šaltiniai"
-        )
-
-        shown_sources = set()
-
-        for info in [
-            info_1,
-            info_2
-        ]:
-
-            if info is None:
-                continue
-
-            source = clean_value(
-                info.get(
-                    "source"
-                )
-            )
-
-            if (
-                source != "—"
-                and source not in shown_sources
-            ):
-
-                st.write(
-                    f"• {source}"
-                )
-
-                shown_sources.add(
-                    source
-                )
-
-        if not shown_sources:
-
-            st.caption(
-                "Atskiri farmakologiniai profiliai "
-                "šiems ingredientams patikrintoje "
-                "prototipo bazėje dar neaprašyti."
-            )
-
-        st.caption(
-            "Preparatų pavadinimai, veikliosios "
-            "medžiagos, stiprumas, farmacinė forma "
-            "ir vartojimo būdas gaunami iš projekte "
-            "esančio VVKT duomenų rinkinio."
-        )
-
+    return None
 
 # =========================================================
 # APIE SISTEMĄ
