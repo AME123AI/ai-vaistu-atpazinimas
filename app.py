@@ -559,144 +559,69 @@ def prepare_ocr_images(image):
     return prepared_images
 
 
-def run_ocr(image):
-    """
-    Dviejų pakopų OCR.
+with st.spinner(
+    "Analizuojama pakuotė..."
+):
 
-    1 etapas – greitas:
-    viena tinkamai orientuota ir optimizuota nuotrauka.
+    # -------------------------------------------------
+    # 1 ETAPAS – GREITAS OCR
+    # -------------------------------------------------
 
-    2 etapas – fallback:
-    papildomi pasukimai ir vaizdo variantai naudojami tik
-    tada, kai greitas OCR nepateikia pakankamai teksto.
-    """
-
-    # -----------------------------------------------------
-    # 1. GREITAS OCR
-    # -----------------------------------------------------
-
-    base = ImageOps.exif_transpose(
+    fast_ocr_text = run_fast_ocr(
         image
-    ).convert("RGB")
-
-    width, height = base.size
-    max_side = 1600
-
-    if max(width, height) > max_side:
-
-        scale = max_side / max(
-            width,
-            height
-        )
-
-        base = base.resize(
-            (
-                max(1, int(width * scale)),
-                max(1, int(height * scale))
-            ),
-            Image.Resampling.LANCZOS
-        )
-
-    gray = ImageOps.grayscale(base)
-
-    gray = ImageOps.autocontrast(
-        gray
     )
 
-    try:
+    fast_candidates = (
+        rank_vvkt_candidates(
+            fast_ocr_text,
+            top_n=5
+        )
+    )
 
-        fast_text = (
-            pytesseract.image_to_string(
-                gray,
-                config="--psm 11"
+    # -------------------------------------------------
+    # AR GREITO OCR PAKANKA?
+    # -------------------------------------------------
+
+    # Jei VVKT jau rado bent vieną realų kandidatą,
+    # papildomo OCR nedarome.
+    #
+    # Jei kandidato nėra, vien tokie duomenys kaip
+    # "30 mg" ir "tabletės" nelaikomi pakankamu
+    # vaisto atpažinimu.
+
+    if fast_candidates:
+
+        ocr_text = (
+            fast_ocr_text
+        )
+
+        ranked_candidates = (
+            fast_candidates
+        )
+
+    else:
+
+        # ---------------------------------------------
+        # 2 ETAPAS – FALLBACK OCR
+        # ---------------------------------------------
+
+        fallback_text = (
+            run_fallback_ocr(
+                image,
+                fast_text=fast_ocr_text
             )
-            .strip()
         )
 
-    except Exception:
-
-        fast_text = ""
-
-    # Jei OCR jau perskaitė pakankamai prasmingo teksto,
-    # papildomų brangių bandymų nedarome.
-
-    normalized_fast = normalize_text(
-        fast_text
-    )
-
-    meaningful_words = [
-        word
-        for word in normalized_fast.split()
-        if len(word) >= 4
-    ]
-
-    if (
-        len(normalized_fast) >= 15
-        and len(meaningful_words) >= 2
-    ):
-
-        return fast_text
-
-    # -----------------------------------------------------
-    # 2. FALLBACK OCR
-    # -----------------------------------------------------
-
-    texts = []
-
-    if fast_text:
-        texts.append(fast_text)
-
-    # Fallback tikrina orientacijas, tačiau nebekuria
-    # 20 vaizdo variantų kaip ankstesnė versija.
-
-    for angle in (
-        0,
-        90,
-        180,
-        270
-    ):
-
-        rotated = base.rotate(
-            angle,
-            expand=True
+        ocr_text = (
+            fallback_text
         )
 
-        gray = ImageOps.grayscale(
-            rotated
-        )
-
-        processed = ImageOps.autocontrast(
-            gray
-        )
-
-        processed = ImageEnhance.Contrast(
-            processed
-        ).enhance(1.6)
-
-        try:
-
-            text = (
-                pytesseract.image_to_string(
-                    processed,
-                    config="--psm 11"
-                )
-                .strip()
+        ranked_candidates = (
+            rank_vvkt_candidates(
+                ocr_text,
+                top_n=5
             )
-
-            if text:
-                texts.append(text)
-
-        except Exception:
-            continue
-
-    unique_texts = list(
-        dict.fromkeys(texts)
-    )
-
-    return "\n".join(
-        unique_texts
-    )
-
+        )
 # =========================================================
 # OCR – STIPRUMO ATPAŽINIMAS
 # =========================================================
