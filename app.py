@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import re
 from difflib import get_close_matches
 
 import joblib
@@ -10,6 +11,10 @@ import streamlit as st
 from PIL import Image
 from skimage.feature import hog
 
+
+# =========================================================
+# NUSTATYMAI
+# =========================================================
 
 ROOT = Path(__file__).parent
 
@@ -76,6 +81,202 @@ vvkt_names = sorted(
 
 
 # =========================================================
+# PAGALBINĖS FUNKCIJOS
+# =========================================================
+
+def clean_value(value):
+    if pd.isna(value):
+        return "—"
+
+    value = str(value).strip()
+
+    if not value:
+        return "—"
+
+    return value
+
+
+def normalize_text(text):
+    return (
+        str(text)
+        .lower()
+        .replace("ė", "e")
+        .replace("ę", "e")
+        .replace("ą", "a")
+        .replace("č", "c")
+        .replace("š", "s")
+        .replace("ų", "u")
+        .replace("ū", "u")
+        .replace("ž", "z")
+        .replace("į", "i")
+    )
+
+
+def get_vvkt_rows(name):
+    return vvkt[
+        vvkt["preparato_pav"] == name
+    ]
+
+
+def get_vvkt_row(name):
+    rows = get_vvkt_rows(name)
+
+    if rows.empty:
+        return None
+
+    return rows.iloc[0]
+
+
+def get_ingredient(name):
+    row = get_vvkt_row(name)
+
+    if row is None:
+        return None
+
+    value = row.get(
+        "veiklioji_medz_lt",
+        None
+    )
+
+    if pd.isna(value):
+        return None
+
+    value = str(value).strip()
+
+    return value if value else None
+
+
+def show_vvkt_info(name):
+    row = get_vvkt_row(name)
+
+    if row is None:
+        st.warning(
+            "Šio preparato VVKT informacijos rasti nepavyko."
+        )
+        return
+
+    st.write(
+        "**Pavadinimas:**",
+        clean_value(row.get("preparato_pav"))
+    )
+
+    st.write(
+        "**Veiklioji medžiaga:**",
+        clean_value(row.get("veiklioji_medz_lt"))
+    )
+
+    st.write(
+        "**Stiprumas:**",
+        clean_value(row.get("stiprumas"))
+    )
+
+    st.write(
+        "**Farmacinė forma:**",
+        clean_value(row.get("farmacine_forma_lt"))
+    )
+
+    st.write(
+        "**Vartojimo būdas:**",
+        clean_value(row.get("vartojimo_budas"))
+    )
+
+    st.write(
+        "**Recepto poreikis:**",
+        clean_value(row.get("recepto_poreikis"))
+    )
+
+
+# Senų 24 klasių pavadinimų susiejimas su VVKT veikliosiomis
+# medžiagomis. Tai leidžia esamas interactions.csv taisykles
+# panaudoti VVKT pasirinktiems preparatams, kai veiklioji
+# medžiaga sutampa.
+
+LEGACY_INGREDIENT_ALIASES = {
+    "Aggrex": [
+        "acetilsalicilo"
+    ],
+    "CELEBREX": [
+        "celekoksib"
+    ],
+    "Candalkan": [
+        "kandesartan"
+    ],
+}
+
+
+def ingredient_matches_legacy_drug(
+    ingredient,
+    legacy_drug
+):
+    if not ingredient:
+        return False
+
+    ingredient_norm = normalize_text(
+        ingredient
+    )
+
+    aliases = LEGACY_INGREDIENT_ALIASES.get(
+        legacy_drug,
+        []
+    )
+
+    for alias in aliases:
+        if normalize_text(alias) in ingredient_norm:
+            return True
+
+    return False
+
+
+def find_interaction_rules(
+    ingredient_a,
+    ingredient_b
+):
+    results = []
+
+    if not ingredient_a or not ingredient_b:
+        return results
+
+    for _, rule in interactions.iterrows():
+
+        drug_a = str(
+            rule.get("drug_a", "")
+        ).strip()
+
+        drug_b = str(
+            rule.get("drug_b", "")
+        ).strip()
+
+        direct = (
+            ingredient_matches_legacy_drug(
+                ingredient_a,
+                drug_a
+            )
+            and
+            ingredient_matches_legacy_drug(
+                ingredient_b,
+                drug_b
+            )
+        )
+
+        reverse = (
+            ingredient_matches_legacy_drug(
+                ingredient_a,
+                drug_b
+            )
+            and
+            ingredient_matches_legacy_drug(
+                ingredient_b,
+                drug_a
+            )
+        )
+
+        if direct or reverse:
+            results.append(rule)
+
+    return results
+
+
+# =========================================================
 # DIZAINAS
 # =========================================================
 
@@ -110,8 +311,8 @@ st.title(
 )
 
 st.caption(
-    "Edukacinis HOG + Logistic Regression prototipas "
-    "su OCR ir VVKT duomenimis"
+    "Edukacinis prototipas: HOG + Logistic Regression "
+    "bazinis modelis, OCR ir VVKT duomenys"
 )
 
 st.warning(
@@ -119,6 +320,17 @@ st.warning(
     "individuali medicininė rekomendacija ir "
     "nepakeičia gydytojo ar vaistininko konsultacijos."
 )
+
+
+# =========================================================
+# SESSION STATE
+# =========================================================
+
+if "first_drug" not in st.session_state:
+    st.session_state.first_drug = None
+
+if "first_vvkt_drug" not in st.session_state:
+    st.session_state.first_vvkt_drug = None
 
 
 # =========================================================
@@ -138,60 +350,52 @@ uploaded = st.file_uploader(
 )
 
 
-if "first_drug" not in st.session_state:
-    st.session_state.first_drug = None
-if "first_vvkt_drug" not in st.session_state:
-    st.session_state.first_vvkt_drug = None
 # =========================================================
-# OCR + HOG ATPAŽINIMAS
+# OCR + HOG
 # =========================================================
 
 if uploaded:
 
-    image = Image.open(uploaded).convert("RGB")
+    image = Image.open(
+        uploaded
+    ).convert("RGB")
 
-    # -------------------------
+    # -----------------------------------------------------
     # OCR
-    # -------------------------
+    # -----------------------------------------------------
 
-    ocr_text = pytesseract.image_to_string(image)
+    ocr_text = pytesseract.image_to_string(
+        image
+    )
 
-    with st.expander("🔤 OCR nuskaitytas tekstas"):
+    with st.expander(
+        "🔤 OCR nuskaitytas tekstas"
+    ):
         st.text(
             ocr_text
             if ocr_text.strip()
             else "Teksto atpažinti nepavyko."
         )
 
-    # =====================================================
-    # OCR TEKSTO PALYGINIMAS SU VVKT DUOMENIMIS
-    # =====================================================
-
     ocr_text_lower = ocr_text.lower()
-
-    # Normalizuojame OCR tekstą paprastesniam palyginimui
-    normalized_ocr = (
-        ocr_text_lower
-        .replace("ė", "e")
-        .replace("ę", "e")
-        .replace("ą", "a")
-        .replace("č", "c")
-        .replace("š", "s")
-        .replace("ų", "u")
-        .replace("ū", "u")
-        .replace("ž", "z")
-        .replace("į", "i")
+    normalized_ocr = normalize_text(
+        ocr_text
     )
 
     ocr_suggestions = []
 
-    # ---------------------------------
-    # 1. TIKSLUS PREPARATO PAVADINIMAS
-    # ---------------------------------
+    detected_ingredient = None
+    detected_strength = None
+    detected_form = None
+
+    # -----------------------------------------------------
+    # A. TIKSLUS PREPARATO PAVADINIMAS
+    # -----------------------------------------------------
 
     exact_matches = []
 
     for name in vvkt_names:
+
         if name.lower() in ocr_text_lower:
             exact_matches.append(name)
 
@@ -204,9 +408,9 @@ if uploaded:
     if exact_matches:
         ocr_suggestions = exact_matches
 
-    # ---------------------------------
-    # 2. VEIKLIOJI MEDŽIAGA
-    # ---------------------------------
+    # -----------------------------------------------------
+    # B. VEIKLIOJI MEDŽIAGA
+    # -----------------------------------------------------
 
     if not ocr_suggestions:
 
@@ -234,8 +438,6 @@ if uploaded:
             if len(line.strip()) >= 4
         ]
 
-        detected_ingredient = None
-
         for line in ocr_lines:
 
             search_parts = [line]
@@ -256,118 +458,128 @@ if uploaded:
                 )
 
                 if matches:
+
                     detected_ingredient = (
-                        ingredient_lookup[matches[0]]
+                        ingredient_lookup[
+                            matches[0]
+                        ]
                     )
+
                     break
 
             if detected_ingredient:
                 break
 
-        # ---------------------------------
-        # 3. FILTRUOJAME PAGAL VVKT
-        # ---------------------------------
+    # -----------------------------------------------------
+    # C. STIPRUMAS
+    # -----------------------------------------------------
 
-        if detected_ingredient:
+    strength_match = re.search(
+        r"\b(\d+(?:[.,]\d+)?)\s*mg\b",
+        ocr_text_lower
+    )
 
-            candidates = vvkt[
-                vvkt["veiklioji_medz_lt"]
+    if strength_match:
+
+        detected_strength = (
+            strength_match
+            .group(1)
+            .replace(",", ".")
+            + " mg"
+        )
+
+    # -----------------------------------------------------
+    # D. FARMACINĖ FORMA
+    # -----------------------------------------------------
+
+    if (
+        "plevele dengtos tabletes"
+        in normalized_ocr
+    ):
+        detected_form = (
+            "plėvele dengtos tabletės"
+        )
+
+    elif "tabletes" in normalized_ocr:
+        detected_form = "tabletės"
+
+    # -----------------------------------------------------
+    # E. VVKT FILTRAVIMAS
+    # -----------------------------------------------------
+
+    if (
+        not ocr_suggestions
+        and detected_ingredient
+    ):
+
+        candidates = vvkt[
+            vvkt["veiklioji_medz_lt"]
+            .fillna("")
+            .astype(str)
+            .str.lower()
+            ==
+            detected_ingredient.lower()
+        ].copy()
+
+        if detected_strength:
+
+            strength_candidates = candidates[
+                candidates["stiprumas"]
                 .fillna("")
                 .astype(str)
                 .str.lower()
-                == detected_ingredient.lower()
-            ].copy()
-
-            # ---------------------------------
-            # STIPRUMAS
-            # ---------------------------------
-
-            import re
-
-            strength_match = re.search(
-                r"\b(\d+(?:[.,]\d+)?)\s*mg\b",
-                ocr_text_lower
-            )
-
-            detected_strength = None
-
-            if strength_match:
-                detected_strength = (
-                    strength_match.group(1)
-                    .replace(",", ".")
-                    + " mg"
+                .str.contains(
+                    detected_strength.lower(),
+                    regex=False
                 )
+            ]
 
-            if detected_strength:
+            if not strength_candidates.empty:
+                candidates = strength_candidates
 
-                strength_candidates = candidates[
-                    candidates["stiprumas"]
-                    .fillna("")
-                    .astype(str)
-                    .str.lower()
-                    .str.contains(
-                        detected_strength.lower(),
-                        regex=False
-                    )
-                ]
+        if detected_form == "plėvele dengtos tabletės":
 
-                if not strength_candidates.empty:
-                    candidates = strength_candidates
-
-            # ---------------------------------
-            # FARMACINĖ FORMA
-            # ---------------------------------
-
-            if (
-                "plevele dengtos tabletes"
-                in normalized_ocr
-            ):
-
-                form_candidates = candidates[
-                    candidates["farmacine_forma_lt"]
-                    .fillna("")
-                    .astype(str)
-                    .str.lower()
-                    .str.contains(
-                        "plėvele dengtos tabletės",
-                        regex=False
-                    )
-                ]
-
-                if not form_candidates.empty:
-                    candidates = form_candidates
-
-            elif "tabletes" in normalized_ocr:
-
-                form_candidates = candidates[
-                    candidates["farmacine_forma_lt"]
-                    .fillna("")
-                    .astype(str)
-                    .str.lower()
-                    .str.contains(
-                        "tablet",
-                        regex=False
-                    )
-                ]
-
-                if not form_candidates.empty:
-                    candidates = form_candidates
-
-            # ---------------------------------
-            # GALUTINIAI PASIŪLYMAI
-            # ---------------------------------
-
-            ocr_suggestions = (
-                candidates["preparato_pav"]
-                .dropna()
+            form_candidates = candidates[
+                candidates["farmacine_forma_lt"]
+                .fillna("")
                 .astype(str)
-                .drop_duplicates()
-                .tolist()
-            )
+                .str.lower()
+                .str.contains(
+                    "plėvele dengtos tabletės",
+                    regex=False
+                )
+            ]
 
-    # ---------------------------------
-    # 4. ATSARGINĖ PAVADINIMO PAIEŠKA
-    # ---------------------------------
+            if not form_candidates.empty:
+                candidates = form_candidates
+
+        elif detected_form == "tabletės":
+
+            form_candidates = candidates[
+                candidates["farmacine_forma_lt"]
+                .fillna("")
+                .astype(str)
+                .str.lower()
+                .str.contains(
+                    "tablet",
+                    regex=False
+                )
+            ]
+
+            if not form_candidates.empty:
+                candidates = form_candidates
+
+        ocr_suggestions = (
+            candidates["preparato_pav"]
+            .dropna()
+            .astype(str)
+            .drop_duplicates()
+            .tolist()
+        )
+
+    # -----------------------------------------------------
+    # F. ATSARGINĖ FUZZY PAIEŠKA
+    # -----------------------------------------------------
 
     if not ocr_suggestions:
 
@@ -387,62 +599,76 @@ if uploaded:
                 cutoff=0.80
             )
 
-            fuzzy_matches.extend(matches)
+            fuzzy_matches.extend(
+                matches
+            )
 
         ocr_suggestions = fuzzy_matches
-       # =====================================================
-    # PARODOME, KĄ OCR PAVYKO ATPAŽINTI
-    # =====================================================
+
+    ocr_suggestions = list(
+        dict.fromkeys(
+            ocr_suggestions
+        )
+    )[:20]
+
+    # -----------------------------------------------------
+    # OCR APTIKTA INFORMACIJA
+    # -----------------------------------------------------
 
     detected_parts = []
 
-    if "detected_ingredient" in locals() and detected_ingredient:
+    if detected_ingredient:
         detected_parts.append(
-            f"Veiklioji medžiaga: {detected_ingredient}"
+            f"Veiklioji medžiaga: "
+            f"{detected_ingredient}"
         )
 
-    if "detected_strength" in locals() and detected_strength:
+    if detected_strength:
         detected_parts.append(
-            f"Stiprumas: {detected_strength}"
+            f"Stiprumas: "
+            f"{detected_strength}"
         )
 
-    if "plevele dengtos tabletes" in normalized_ocr:
+    if detected_form:
         detected_parts.append(
-            "Farmacinė forma: plėvele dengtos tabletės"
-        )
-    elif "tabletes" in normalized_ocr:
-        detected_parts.append(
-            "Farmacinė forma: tabletės"
+            f"Farmacinė forma: "
+            f"{detected_form}"
         )
 
     if detected_parts:
-        st.markdown("### 🧾 OCR aptiko")
+
+        st.markdown(
+            "### 🧾 OCR aptiko"
+        )
 
         for part in detected_parts:
-            st.write("• " + part)
+            st.write(
+                "• " + part
+            )
 
-    # Pašaliname pasikartojančius kandidatus
-    ocr_suggestions = list(
-        dict.fromkeys(ocr_suggestions)
-    )
-
-    # Rodome daugiausia 20 kandidatų
-    ocr_suggestions = ocr_suggestions[:20]
+    # -----------------------------------------------------
+    # VVKT KANDIDATAI
+    # -----------------------------------------------------
 
     if ocr_suggestions:
+
         st.markdown(
             "### 🔎 VVKT atitinkantys preparatai"
         )
 
         if len(ocr_suggestions) == 1:
+
             st.success(
                 "Pagal OCR informaciją rastas "
                 "1 atitinkantis VVKT preparatas."
             )
+
         else:
+
             st.info(
                 f"Pagal OCR informaciją rasti "
-                f"{len(ocr_suggestions)} galimi VVKT preparatai. "
+                f"{len(ocr_suggestions)} galimi "
+                "VVKT preparatai. "
                 "Pasirinkite preparatą pagal pakuotę."
             )
 
@@ -451,65 +677,54 @@ if uploaded:
             ocr_suggestions,
             key="ocr_vvkt_match"
         )
+
         if st.button(
             "✅ Patvirtinti šį VVKT preparatą",
             key="confirm_ocr_vvkt"
         ):
-            st.session_state.first_vvkt_drug = ocr_selected
+
+            st.session_state.first_vvkt_drug = (
+                ocr_selected
+            )
+
             st.success(
-                f"Patvirtintas preparatas: {ocr_selected}"
-            )
-        selected_rows = vvkt[
-            vvkt["preparato_pav"] == ocr_selected
-        ]
-
-        if not selected_rows.empty:
-            row = selected_rows.iloc[0]
-
-            st.markdown(
-                "#### 💊 Patvirtinto preparato VVKT informacija"
+                f"Patvirtintas preparatas: "
+                f"{ocr_selected}"
             )
 
-            st.write(
-                "**Pavadinimas:**",
-                row.get("preparato_pav", "—")
-            )
+        st.markdown(
+            "#### 💊 Pasirinkto kandidato VVKT informacija"
+        )
 
-            st.write(
-                "**Veiklioji medžiaga:**",
-                row.get("veiklioji_medz_lt", "—")
-            )
-
-            st.write(
-                "**Stiprumas:**",
-                row.get("stiprumas", "—")
-            )
-
-            st.write(
-                "**Farmacinė forma:**",
-                row.get("farmacine_forma_lt", "—")
-            )
-
-            st.write(
-                "**Vartojimo būdas:**",
-                row.get("vartojimo_budas", "—")
-            )
-
-            st.write(
-                "**Recepto poreikis:**",
-                row.get("recepto_poreikis", "—")
-            )
+        show_vvkt_info(
+            ocr_selected
+        )
 
     else:
+
         st.info(
             "Pagal OCR nuskaitytą informaciją "
             "VVKT kataloge tinkamų preparatų nerasta."
         )
-        # -------------------------
-    # HOG + LOGISTIC REGRESSION
-    # -------------------------
 
-    c1, c2 = st.columns(2)
+    # -----------------------------------------------------
+    # HOG + LOGISTIC REGRESSION BASELINE
+    # -----------------------------------------------------
+
+    st.divider()
+
+    st.markdown(
+        "### 🤖 2. Bazinis AI modelis"
+    )
+
+    st.caption(
+        "HOG + Logistic Regression modelis "
+        "atpažįsta tik 24 mokymo rinkinio klases. "
+        "Jeigu įkeltas preparatas nėra tarp šių "
+        "24 klasių, modelio Top-1 rezultatas "
+        "neturėtų būti interpretuojamas kaip "
+        "patikimas preparato identifikavimas."
+    )
 
     c1, c2 = st.columns(2)
 
@@ -521,11 +736,12 @@ if uploaded:
             use_container_width=True
         )
 
-
     with c2:
 
         arr = np.asarray(
-            image.convert("L").resize((128, 128)),
+            image
+            .convert("L")
+            .resize((128, 128)),
             dtype=np.float32
         ) / 255.0
 
@@ -539,44 +755,49 @@ if uploaded:
             feature_vector=True
         ).reshape(1, -1)
 
-        probs = model.predict_proba(features)[0]
+        probs = model.predict_proba(
+            features
+        )[0]
 
         top = np.argsort(
             probs
         )[::-1][:3]
 
-        st.markdown(
-            "### 🤖 2. Bazinis AI modelis"
-        )
-
-        st.caption(
-            "HOG + Logistic Regression modelis "
-            "atpažįsta tik 24 mokymo rinkinio klases."
-        )
-
-        for i, idx in enumerate(top, 1):
+        for i, idx in enumerate(
+            top,
+            1
+        ):
 
             st.write(
-                f"**{i}. {model.classes_[idx]}** — "
+                f"**{i}. "
+                f"{model.classes_[idx]}** — "
                 f"{probs[idx] * 100:.1f}% "
-                f"modelio tikimybės įvertis"
+                "modelio tikimybės įvertis"
             )
 
-        suggested = model.classes_[top[0]]
+        suggested = (
+            model.classes_[
+                top[0]
+            ]
+        )
 
-        if st.button("Patvirtinti Top-1"):
+        if st.button(
+            "Patvirtinti bazinio modelio Top-1"
+        ):
 
-            st.session_state.first_drug = suggested
+            st.session_state.first_drug = (
+                suggested
+            )
 
 
 # =========================================================
-# VVKT RANKINĖ PAIEŠKA
+# RANKINĖ VVKT PAIEŠKA
 # =========================================================
 
 st.divider()
 
 st.markdown(
-    "### 🔎 Patobulinta paieška VVKT vaistų kataloge"
+    "### 🔎 Rankinė paieška VVKT vaistų kataloge"
 )
 
 vvkt_query = st.text_input(
@@ -584,70 +805,46 @@ vvkt_query = st.text_input(
     placeholder="Pvz. Atacand"
 )
 
-
 if vvkt_query:
 
     matches = [
         name
         for name in vvkt_names
-        if vvkt_query.lower() in name.lower()
+        if vvkt_query.lower()
+        in name.lower()
     ][:20]
-
 
     if matches:
 
         selected_vvkt = st.selectbox(
             "Rasti preparatai",
-            matches
+            matches,
+            key="manual_vvkt"
         )
 
-        selected_rows = vvkt[
-            vvkt["preparato_pav"] == selected_vvkt
-        ]
+        show_vvkt_info(
+            selected_vvkt
+        )
 
+        if st.button(
+            "✅ Naudoti kaip pirmąjį preparatą",
+            key="manual_first"
+        ):
 
-        if not selected_rows.empty:
-
-            row = selected_rows.iloc[0]
-
-            st.markdown(
-                "#### 💊 Preparato informacija"
+            st.session_state.first_vvkt_drug = (
+                selected_vvkt
             )
 
-            st.write(
-                "**Pavadinimas:**",
-                row.get("preparato_pav", "—")
-            )
-
-            st.write(
-                "**Veiklioji medžiaga:**",
-                row.get("veiklioji_medz_lt", "—")
-            )
-
-            st.write(
-                "**Stiprumas:**",
-                row.get("stiprumas", "—")
-            )
-
-            st.write(
-                "**Farmacinė forma:**",
-                row.get("farmacine_forma_lt", "—")
-            )
-
-            st.write(
-                "**Vartojimo būdas:**",
-                row.get("vartojimo_budas", "—")
-            )
-
-            st.write(
-                "**Recepto poreikis:**",
-                row.get("recepto_poreikis", "—")
+            st.success(
+                f"Pasirinktas preparatas: "
+                f"{selected_vvkt}"
             )
 
     else:
 
         st.info(
-            "Pagal įvestą pavadinimą preparatų nerasta."
+            "Pagal įvestą pavadinimą "
+            "preparatų nerasta."
         )
 
 
@@ -659,68 +856,43 @@ st.divider()
 
 st.markdown(
     '<div class="step">'
-    '✅ 3. Patvirtinkite arba pataisykite rezultatą'
+    '✅ 3. Patvirtinkite pirmą preparatą'
     '</div>',
     unsafe_allow_html=True
 )
 
+first = None
+
 if st.session_state.first_vvkt_drug:
 
-    first = st.session_state.first_vvkt_drug
-
-    st.success(
-        f"Pasirinktas pirmasis preparatas: {first}"
+    first = (
+        st.session_state.first_vvkt_drug
     )
 
-    first_rows = vvkt[
-        vvkt["preparato_pav"] == first
-    ]
+    st.success(
+        f"Pasirinktas pirmasis preparatas: "
+        f"{first}"
+    )
 
-    if not first_rows.empty:
-        first_row = first_rows.iloc[0]
-
-        st.write(
-            "**Veiklioji medžiaga:**",
-            first_row.get("veiklioji_medz_lt", "—")
-        )
-
-        st.write(
-            "**Stiprumas:**",
-            first_row.get("stiprumas", "—")
-        )
-
-        st.write(
-            "**Farmacinė forma:**",
-            first_row.get("farmacine_forma_lt", "—")
-        )
+    show_vvkt_info(
+        first
+    )
 
     if st.button(
         "🔄 Pasirinkti kitą pirmąjį preparatą"
     ):
+
         st.session_state.first_vvkt_drug = None
         st.rerun()
 
 else:
 
     st.info(
-        "Pirmiausia įkelkite pakuotės nuotrauką "
-        "ir patvirtinkite vieną iš VVKT pasiūlytų preparatų."
+        "Įkelkite pakuotės nuotrauką ir "
+        "patvirtinkite VVKT kandidatą arba "
+        "naudokite rankinę VVKT paiešką."
     )
 
-    default_index = (
-        classes.index(st.session_state.first_drug)
-        if st.session_state.first_drug in classes
-        else 0
-    )
-
-    baseline_first = st.selectbox(
-        "Arba pasirinkite bazinio modelio preparatą",
-        classes,
-        index=default_index
-    )
-
-    first = baseline_first
-    st.session_state.first_drug = baseline_first
 
 # =========================================================
 # 4. ANTRAS VAISTAS
@@ -735,7 +907,7 @@ st.markdown(
 
 second_query = st.text_input(
     "Ieškokite antro vaisto VVKT kataloge",
-    placeholder="Pvz. Celebrex, Atacand, Diflucan..."
+    placeholder="Pvz. No-Spa, Celebrex, Atacand..."
 )
 
 second = None
@@ -745,7 +917,8 @@ if second_query:
     second_matches = [
         name
         for name in vvkt_names
-        if second_query.lower() in name.lower()
+        if second_query.lower()
+        in name.lower()
     ][:20]
 
     if second_matches:
@@ -756,31 +929,15 @@ if second_query:
             key="second_vvkt_drug"
         )
 
-        second_rows = vvkt[
-            vvkt["preparato_pav"] == second
-        ]
-
-        if not second_rows.empty:
-            second_row = second_rows.iloc[0]
-
-            st.write(
-                "**Veiklioji medžiaga:**",
-                second_row.get("veiklioji_medz_lt", "—")
-            )
-
-            st.write(
-                "**Stiprumas:**",
-                second_row.get("stiprumas", "—")
-            )
-
-            st.write(
-                "**Farmacinė forma:**",
-                second_row.get("farmacine_forma_lt", "—")
-            )
+        show_vvkt_info(
+            second
+        )
 
     else:
+
         st.info(
-            "Pagal įvestą pavadinimą VVKT preparatų nerasta."
+            "Pagal įvestą pavadinimą "
+            "VVKT preparatų nerasta."
         )
 
 
@@ -797,65 +954,23 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-
-def route_text(routes):
-    return (
-        ", ".join(routes)
-        if routes
-        else "vartojimo būdas neįvestas"
-    )
-
-
-def show_drug(name):
-
-    d = drug_data.get(name, {})
-
-    st.markdown(f"**{name}**")
-
-    st.write(
-        "Vartojimo būdas:",
-        route_text(d.get("routes", []))
-    )
-
-    ings = d.get("ingredients", [])
-
-    if not ings:
-
-        st.info(
-            "Šio preparato veikliųjų medžiagų profilį "
-            "dar reikia patikrinti pagal konkretaus "
-            "preparato informacinį lapelį."
-        )
-
-        return
-
-
-    for ing in ings:
-
-        p = ingredient_profiles.get(ing)
-
-        if p:
-
-            st.write(
-                f"• **{ing}** — "
-                f"{p['group']}. {p['effect']}"
-            )
-
-        else:
-
-            st.write(
-                f"• **{ing}**"
-            )
-
-
 if st.button(
     "🔬 Patikrinti sąveiką",
     type="primary"
 ):
 
-    if not second:
+    if not first:
+
         st.warning(
-            "Pirmiausia pasirinkite antrą preparatą."
+            "Pirmiausia patvirtinkite "
+            "pirmą preparatą."
+        )
+
+    elif not second:
+
+        st.warning(
+            "Pirmiausia pasirinkite "
+            "antrą preparatą."
         )
 
     elif first == second:
@@ -866,116 +981,159 @@ if st.button(
 
     else:
 
+        first_ingredient = get_ingredient(
+            first
+        )
+
+        second_ingredient = get_ingredient(
+            second
+        )
+
+        first_row = get_vvkt_row(
+            first
+        )
+
+        second_row = get_vvkt_row(
+            second
+        )
+
         st.subheader(
             f"💊 {first} + {second}"
         )
+
+        # -------------------------------------------------
+        # VEIKLIOSIOS MEDŽIAGOS
+        # -------------------------------------------------
 
         st.markdown(
             "### 🧪 Veikliosios medžiagos"
         )
 
-        a = drug_data.get(first, {})
-        b = drug_data.get(second, {})
+        st.write(
+            f"**{first}:** "
+            f"{first_ingredient or '—'}"
+        )
 
-        show_drug(first)
-        show_drug(second)
+        st.write(
+            f"**{second}:** "
+            f"{second_ingredient or '—'}"
+        )
 
+        # -------------------------------------------------
+        # SĄVEIKŲ TAISYKLĖS
+        # -------------------------------------------------
 
         st.markdown(
             "### 🔬 Kaip šie vaistai veikia kartu"
         )
 
-        mask = (
-            (
-                (interactions.drug_a == first)
-                & (interactions.drug_b == second)
-            )
-            |
-            (
-                (interactions.drug_a == second)
-                & (interactions.drug_b == first)
-            )
+        found_rules = find_interaction_rules(
+            first_ingredient,
+            second_ingredient
         )
 
-        found = interactions[mask]
+        if found_rules:
 
-
-        if not found.empty:
-
-            for _, row in found.iterrows():
+            for rule in found_rules:
 
                 st.warning(
-                    row["description"]
+                    str(
+                        rule.get(
+                            "description",
+                            ""
+                        )
+                    )
                 )
 
-                st.caption(
-                    "Šaltinis: " + row["source"]
-                )
+                source = str(
+                    rule.get(
+                        "source",
+                        ""
+                    )
+                ).strip()
+
+                if source:
+                    st.caption(
+                        "Šaltinis: "
+                        + source
+                    )
 
         else:
 
-            ings1 = a.get("ingredients", [])
-            ings2 = b.get("ingredients", [])
-
-            known1 = [
-                ingredient_profiles[x]["effect"]
-                for x in ings1
-                if x in ingredient_profiles
-            ]
-
-            known2 = [
-                ingredient_profiles[x]["effect"]
-                for x in ings2
-                if x in ingredient_profiles
-            ]
-
             st.info(
-                "Šiai porai nėra įrašytos konkrečios "
-                "porinės taisyklės mūsų prototipo bazėje. "
-                "Toliau pateikiamas veikimo mechanizmų "
-                "palyginimas; tai nėra teiginys, kad "
-                "derinys yra saugus."
+                "Šiai veikliųjų medžiagų porai "
+                "dabartinėje prototipo sąveikų "
+                "bazėje nėra įrašytos patikrintos "
+                "porinės taisyklės. Tai nėra "
+                "teiginys, kad šį derinį saugu "
+                "vartoti kartu."
             )
 
+            st.caption(
+                "Prototipo sąveikų bazė šiuo metu "
+                "yra ribota. Sąveikos išvada "
+                "neformuojama vien iš to, kad "
+                "taisyklė nerasta."
+            )
 
-            if known1:
-
-                st.write(
-                    f"**{first}:** "
-                    + " ".join(known1)
-                )
-
-
-            if known2:
-
-                st.write(
-                    f"**{second}:** "
-                    + " ".join(known2)
-                )
-
-
-            if not known1 or not known2:
-
-                st.warning(
-                    "Bent vieno preparato sudėtis šiame "
-                    "prototipe dar nėra pakankamai "
-                    "suprofiliuota, todėl automatinės "
-                    "sąveikos išvados neteikiamos."
-                )
-
+        # -------------------------------------------------
+        # VARTOJIMO BŪDAS
+        # -------------------------------------------------
 
         st.markdown(
             "### 💉 Vartojimo būdas"
         )
 
-        st.write(
-            f"{first}: "
-            f"{route_text(a.get('routes', []))}"
+        first_route = (
+            clean_value(
+                first_row.get(
+                    "vartojimo_budas"
+                )
+            )
+            if first_row is not None
+            else "—"
+        )
+
+        second_route = (
+            clean_value(
+                second_row.get(
+                    "vartojimo_budas"
+                )
+            )
+            if second_row is not None
+            else "—"
         )
 
         st.write(
-            f"{second}: "
-            f"{route_text(b.get('routes', []))}"
+            f"**{first}:** "
+            f"{first_route}"
+        )
+
+        st.write(
+            f"**{second}:** "
+            f"{second_route}"
+        )
+
+        # -------------------------------------------------
+        # DUOMENŲ ŠALTINIO PAAIŠKINIMAS
+        # -------------------------------------------------
+
+        st.markdown(
+            "### 📚 Duomenų interpretacija"
+        )
+
+        st.write(
+            "Preparato pavadinimas, veiklioji "
+            "medžiaga, stiprumas, farmacinė forma "
+            "ir vartojimo būdas gaunami iš "
+            "projekte naudojamo VVKT duomenų rinkinio."
+        )
+
+        st.write(
+            "Konkreti sąveikos informacija rodoma "
+            "tik tada, kai prototipo "
+            "`interactions.csv` faile yra "
+            "atitinkama patikrinta taisyklė."
         )
 
 
@@ -987,6 +1145,8 @@ st.divider()
 
 st.caption(
     "Bazinis modelis: 24 klasės. "
-    "HOG apdorojimas: 128×128, 9 orientacijos, "
-    "8×8 pikselių ląstelė, 2×2 blokas."
+    "HOG apdorojimas: 128×128, "
+    "9 orientacijos, 8×8 pikselių ląstelė, "
+    "2×2 blokas. OCR ir VVKT paieška naudojami "
+    "patobulintame atpažinimo etape."
 )
