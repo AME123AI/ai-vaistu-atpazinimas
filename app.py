@@ -609,7 +609,78 @@ def run_fast_ocr(image):
     except Exception:
         return ""
 
+@st.cache_resource
+def load_paddle_ocr():
+    """
+    PaddleOCR modelį įkeliame tik vieną kartą.
+    """
+    if not PADDLE_AVAILABLE:
+        return None
 
+    try:
+        return PaddleOCR(
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False
+        )
+    except Exception:
+        return None
+
+
+def run_paddle_ocr(image):
+    """
+    Antras OCR etapas sudėtingesnėms telefono nuotraukoms.
+    PaddleOCR kviečiamas tik tada, kai jo iš tikrųjų reikia.
+    """
+    ocr = load_paddle_ocr()
+
+    if ocr is None:
+        return ""
+
+    base = prepare_fast_ocr_image(image)
+
+    try:
+        results = ocr.predict(
+            np.asarray(base)
+        )
+    except Exception:
+        return ""
+
+    texts = []
+
+    for item in results:
+        try:
+            data = item.json
+
+            if callable(data):
+                data = data()
+
+            if isinstance(data, str):
+                data = json.loads(data)
+
+            if isinstance(data, dict):
+                result_data = data.get(
+                    "res",
+                    data
+                )
+
+                rec_texts = result_data.get(
+                    "rec_texts",
+                    []
+                )
+
+                for text in rec_texts:
+                    text = str(text).strip()
+
+                    if text:
+                        texts.append(text)
+
+        except Exception:
+            continue
+
+    return "\n".join(
+        dict.fromkeys(texts)
+    )
 def run_fallback_ocr(image, fast_text=""):
     """
     Papildomas OCR naudojamas tik tada,
