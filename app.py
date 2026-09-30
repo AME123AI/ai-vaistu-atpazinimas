@@ -561,52 +561,134 @@ def prepare_ocr_images(image):
 
 def run_ocr(image):
     """
-    Paleidžia Tesseract OCR kelioms nuotraukos
-    orientacijoms ir keliems teksto analizės režimams.
+    Dviejų pakopų OCR.
+
+    1 etapas – greitas:
+    viena tinkamai orientuota ir optimizuota nuotrauka.
+
+    2 etapas – fallback:
+    papildomi pasukimai ir vaizdo variantai naudojami tik
+    tada, kai greitas OCR nepateikia pakankamai teksto.
     """
+
+    # -----------------------------------------------------
+    # 1. GREITAS OCR
+    # -----------------------------------------------------
+
+    base = ImageOps.exif_transpose(
+        image
+    ).convert("RGB")
+
+    width, height = base.size
+    max_side = 1600
+
+    if max(width, height) > max_side:
+
+        scale = max_side / max(
+            width,
+            height
+        )
+
+        base = base.resize(
+            (
+                max(1, int(width * scale)),
+                max(1, int(height * scale))
+            ),
+            Image.Resampling.LANCZOS
+        )
+
+    gray = ImageOps.grayscale(base)
+
+    gray = ImageOps.autocontrast(
+        gray
+    )
+
+    try:
+
+        fast_text = (
+            pytesseract.image_to_string(
+                gray,
+                config="--psm 11"
+            )
+            .strip()
+        )
+
+    except Exception:
+
+        fast_text = ""
+
+    # Jei OCR jau perskaitė pakankamai prasmingo teksto,
+    # papildomų brangių bandymų nedarome.
+
+    normalized_fast = normalize_text(
+        fast_text
+    )
+
+    meaningful_words = [
+        word
+        for word in normalized_fast.split()
+        if len(word) >= 4
+    ]
+
+    if (
+        len(normalized_fast) >= 15
+        and len(meaningful_words) >= 2
+    ):
+
+        return fast_text
+
+    # -----------------------------------------------------
+    # 2. FALLBACK OCR
+    # -----------------------------------------------------
 
     texts = []
 
-    prepared_images = prepare_ocr_images(
-        image
-    )
+    if fast_text:
+        texts.append(fast_text)
 
-    # Skirtingi Tesseract puslapio analizės režimai:
-    #
-    # PSM 6  – vientisas teksto blokas
-    # PSM 11 – išsklaidytas tekstas
-    # PSM 12 – išsklaidytas tekstas su orientacijos analize
+    # Fallback tikrina orientacijas, tačiau nebekuria
+    # 20 vaizdo variantų kaip ankstesnė versija.
 
-    configs = [
-        "--psm 6",
-        "--psm 11",
-        "--psm 12"
-    ]
+    for angle in (
+        0,
+        90,
+        180,
+        270
+    ):
 
-    for prepared in prepared_images:
+        rotated = base.rotate(
+            angle,
+            expand=True
+        )
 
-        for config in configs:
+        gray = ImageOps.grayscale(
+            rotated
+        )
 
-            try:
+        processed = ImageOps.autocontrast(
+            gray
+        )
 
-                text = (
-                    pytesseract.image_to_string(
-                        prepared,
-                        config=config
-                    )
+        processed = ImageEnhance.Contrast(
+            processed
+        ).enhance(1.6)
+
+        try:
+
+            text = (
+                pytesseract.image_to_string(
+                    processed,
+                    config="--psm 11"
                 )
+                .strip()
+            )
 
-                text = text.strip()
+            if text:
+                texts.append(text)
 
-                if text:
-                    texts.append(text)
+        except Exception:
+            continue
 
-            except Exception:
-                # Vieno OCR bandymo klaida neturi
-                # sustabdyti visos programos
-                continue
-
-    # Pašaliname identiškus OCR rezultatus
     unique_texts = list(
         dict.fromkeys(texts)
     )
@@ -614,7 +696,6 @@ def run_ocr(image):
     return "\n".join(
         unique_texts
     )
-
 
 # =========================================================
 # OCR – STIPRUMO ATPAŽINIMAS
