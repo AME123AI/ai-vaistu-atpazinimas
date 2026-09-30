@@ -938,7 +938,7 @@ def detect_ingredient(text):
             fragment,
             choices,
             n=1,
-            cutoff=0.70
+            cutoff=0.82
         )
 
         if not matches:
@@ -964,77 +964,188 @@ def detect_ingredient(text):
     return best_name
 
 # =========================================================
-# OCR PAVADINIMO KANDIDATAI
+# OCR PAVADINIMO KANDIDATAI – PATOBULINTA VERSIJA
 # =========================================================
+
+def get_ocr_lines(text):
+    """
+    Grąžina prasmingas OCR eilutes.
+    Pakuotės prekės ženklas dažnai būna atskiroje eilutėje.
+    """
+
+    lines = []
+
+    for line in text.splitlines():
+
+        line = normalize_text(line)
+
+        if not line:
+            continue
+
+        # Ignoruojame labai trumpą triukšmą
+        if len(line) < 3:
+            continue
+
+        lines.append(line)
+
+    return list(dict.fromkeys(lines))
+
+
+def get_brand_fragments(text):
+    """
+    Sukuria fragmentus, kurie labiausiai tinka
+    preparato prekės ženklo paieškai.
+    """
+
+    fragments = []
+
+    for line in get_ocr_lines(text):
+
+        # Visa OCR eilutė
+        if 3 <= len(line) <= 50:
+            fragments.append(line)
+
+        words = line.split()
+
+        # Atskiri žodžiai
+        for word in words:
+
+            # Preparatų pavadinimams trumpesni nei
+            # 4 simbolių fragmentai per daug nepatikimi
+            if len(word) >= 4:
+                fragments.append(word)
+
+        # 2 ir 3 žodžių preparatų pavadinimai
+        for size in (2, 3):
+
+            if len(words) < size:
+                continue
+
+            for i in range(
+                len(words) - size + 1
+            ):
+
+                fragment = " ".join(
+                    words[i:i + size]
+                )
+
+                if len(fragment) >= 5:
+                    fragments.append(fragment)
+
+    return list(
+        dict.fromkeys(fragments)
+    )
+
+
+def brand_similarity(
+    drug_name,
+    fragment
+):
+    """
+    Palygina VVKT preparato pavadinimą
+    su OCR fragmentu.
+    """
+
+    drug = normalize_text(drug_name)
+    fragment = normalize_text(fragment)
+
+    if not drug or not fragment:
+        return 0.0
+
+    # Tikslus atitikimas
+    if drug == fragment:
+        return 1.0
+
+    # Visas preparato pavadinimas perskaitytas
+    # ilgesnėje OCR eilutėje
+    if (
+        len(drug) >= 4
+        and drug in fragment
+    ):
+        return 0.99
+
+    # OCR eilutė yra preparato pavadinimo dalis
+    if (
+        len(fragment) >= 5
+        and fragment in drug
+    ):
+
+        ratio = len(fragment) / len(drug)
+
+        if ratio >= 0.75:
+            return 0.92
+
+    score = similarity(
+        drug,
+        fragment
+    )
+
+    # Labai trumpiems pavadinimams fuzzy
+    # atitikimą vertiname konservatyviau
+    if len(drug) <= 4:
+
+        if score < 0.90:
+            return 0.0
+
+    elif len(drug) <= 6:
+
+        if score < 0.78:
+            return 0.0
+
+    else:
+
+        if score < 0.68:
+            return 0.0
+
+    return score
+
 
 def find_name_candidates(
     ocr_text,
     max_names=50
 ):
+    """
+    Ieško preparato pavadinimo VVKT registre.
 
-    ocr_norm = normalize_text(
+    Svarbiausias signalas yra prekės ženklas.
+    """
+
+    fragments = get_brand_fragments(
         ocr_text
     )
 
-    normalized_map = {
-        normalize_text(name): name
-        for name in vvkt_names
-    }
-
-    normalized_names = list(
-        normalized_map.keys()
-    )
+    if not fragments:
+        return []
 
     scores = {}
 
-    for normalized_name, original_name in (
-        normalized_map.items()
-    ):
+    for name in vvkt_names:
 
-        if len(normalized_name) < 3:
+        drug = normalize_text(name)
+
+        if len(drug) < 3:
             continue
 
-        if normalized_name in ocr_norm:
+        best = 0.0
 
-            scores[original_name] = 1.0
+        for fragment in fragments:
 
-    fragments = sorted(
-        build_ocr_fragments(
-            ocr_text
-        ),
-        key=len,
-        reverse=True
-    )[:100]
-
-    for fragment in fragments:
-
-        if len(fragment) < 4:
-            continue
-
-        matches = get_close_matches(
-            fragment,
-            normalized_names,
-            n=5,
-            cutoff=0.55
-        )
-
-        for match in matches:
-
-            original = (
-                normalized_map[match]
+            score = brand_similarity(
+                name,
+                fragment
             )
 
-            score = similarity(
-                fragment,
-                match
-            )
+            if score > best:
+                best = score
 
-            if score > scores.get(
-                original,
-                0
-            ):
+            if best >= 0.99:
+                break
 
-                scores[original] = score
+        # Silpnų atsitiktinių sutapimų
+        # į kandidatų sąrašą nededame
+        if best >= 0.68:
+
+            scores[name] = best
 
     ranked = sorted(
         scores.items(),
@@ -1057,21 +1168,21 @@ def name_score(
     name,
     ocr_text
 ):
+    """
+    Preparato pavadinimas yra pagrindinis
+    pakuotės identifikavimo požymis.
+    """
 
-    drug = normalize_text(name)
-    text = normalize_text(ocr_text)
-
-    if drug in text:
-        return 1.0
+    fragments = get_brand_fragments(
+        ocr_text
+    )
 
     best = 0.0
 
-    for fragment in build_ocr_fragments(
-        ocr_text
-    ):
+    for fragment in fragments:
 
-        score = similarity(
-            drug,
+        score = brand_similarity(
+            name,
             fragment
         )
 
@@ -1080,7 +1191,32 @@ def name_score(
             score
         )
 
+        if best >= 0.99:
+            break
+
     return best
+
+
+def normalize_strength_value(value):
+    """
+    Normalizuoja stiprumą palyginimui.
+    Pvz. '30 mg' -> '30mg'
+    """
+
+    value = normalize_text(value)
+
+    value = value.replace(
+        ",",
+        "."
+    )
+
+    value = re.sub(
+        r"\s+",
+        "",
+        value
+    )
+
+    return value
 
 
 def strength_score(
@@ -1102,18 +1238,27 @@ def strength_score(
     if not detected:
         return 0.0
 
-    strength_norm = normalize_text(
+    strength_norm = normalize_strength_value(
         strength
-    ).replace(" ", "")
+    )
 
     for item in detected:
 
-        item_norm = normalize_text(
+        item_norm = normalize_strength_value(
             item
-        ).replace(" ", "")
+        )
 
-        if item_norm in strength_norm:
+        # Reikalaujame pilno stiprumo sutapimo
+        # arba kad OCR reikšmė būtų aiški VVKT
+        # stiprumo dalis.
+        if item_norm == strength_norm:
             return 1.0
+
+        if (
+            len(item_norm) >= 3
+            and item_norm in strength_norm
+        ):
+            return 0.95
 
     return 0.0
 
@@ -1122,6 +1267,11 @@ def ingredient_score(
     ingredient,
     ocr_text
 ):
+    """
+    Veiklioji medžiaga naudojama kaip
+    papildomas patvirtinimas, bet ji negali
+    viena pati nustelbti preparato pavadinimo.
+    """
 
     ingredient = clean_value(
         ingredient
@@ -1138,7 +1288,14 @@ def ingredient_score(
         ocr_text
     )
 
-    if ing in text:
+    if not ing:
+        return 0.0
+
+    # Tikslus veikliosios medžiagos tekstas
+    if (
+        len(ing) >= 5
+        and ing in text
+    ):
         return 1.0
 
     best = 0.0
@@ -1147,18 +1304,25 @@ def ingredient_score(
         ocr_text
     ):
 
-        if len(fragment) < 5:
+        # Neleidžiame trumpiems OCR žodžiams,
+        # pvz. atsitiktiniam "magnis",
+        # sukurti labai stipraus įrodymo
+        if len(fragment) < 7:
             continue
+
+        score = similarity(
+            ing,
+            fragment
+        )
 
         best = max(
             best,
-            similarity(
-                ing,
-                fragment
-            )
+            score
         )
 
-    if best < 0.58:
+    # Ingredientų fuzzy matching turi būti
+    # daug griežtesnis nei anksčiau.
+    if best < 0.78:
         return 0.0
 
     return best
@@ -1183,8 +1347,13 @@ def form_score(
     if not detected:
         return 0.0
 
-    a = normalize_text(form)
-    b = normalize_text(detected)
+    a = normalize_text(
+        form
+    )
+
+    b = normalize_text(
+        detected
+    )
 
     if a == b:
         return 1.0
@@ -1192,11 +1361,19 @@ def form_score(
     if a in b or b in a:
         return 0.85
 
-    return similarity(a, b)
+    score = similarity(
+        a,
+        b
+    )
+
+    if score < 0.60:
+        return 0.0
+
+    return score
 
 
 # =========================================================
-# VVKT KANDIDATŲ REITINGAVIMAS
+# VVKT KANDIDATŲ REITINGAVIMAS – PATOBULINTA VERSIJA
 # =========================================================
 
 def rank_vvkt_candidates(
@@ -1207,16 +1384,29 @@ def rank_vvkt_candidates(
     if not ocr_text.strip():
         return []
 
+    # -----------------------------------------------------
+    # 1. PIRMIAUSIA IEŠKOME PREKĖS ŽENKLO
+    # -----------------------------------------------------
+
     candidate_names = find_name_candidates(
         ocr_text,
-        max_names=50
+        max_names=60
     )
+
+    # -----------------------------------------------------
+    # 2. VEIKLIOJI MEDŽIAGA – TIK PAPILDOMAS SIGNALAS
+    # -----------------------------------------------------
 
     detected_ingredient = detect_ingredient(
         ocr_text
     )
 
-    if detected_ingredient:
+    # Ingredientą naudojame kandidatams papildyti tik tada,
+    # kai prekės ženklo paieška davė labai mažai rezultatų.
+    if (
+        detected_ingredient
+        and len(candidate_names) < 5
+    ):
 
         ingredient_rows = vvkt[
             vvkt["veiklioji_medz_lt"]
@@ -1243,9 +1433,18 @@ def rank_vvkt_candidates(
 
     results = []
 
+    # -----------------------------------------------------
+    # 3. ĮVERTINAME KIEKVIENĄ VVKT KANDIDATĄ
+    # -----------------------------------------------------
+
     for name in candidate_names:
 
-        rows = get_vvkt_rows(name)
+        rows = get_vvkt_rows(
+            name
+        )
+
+        if rows.empty:
+            continue
 
         best_result = None
 
@@ -1264,7 +1463,9 @@ def rank_vvkt_candidates(
             )
 
             ss = strength_score(
-                row.get("stiprumas"),
+                row.get(
+                    "stiprumas"
+                ),
                 ocr_text
             )
 
@@ -1275,37 +1476,75 @@ def rank_vvkt_candidates(
                 ocr_text
             )
 
+            # -------------------------------------------------
+            # SVARBIAUSIAS PAKEITIMAS
+            #
+            # Prekės ženklas gauna 75 % svorio.
+            # Kiti požymiai tik patvirtina rezultatą.
+            # -------------------------------------------------
+
             total = (
-                ns * 0.55
-                + ins * 0.20
-                + ss * 0.15
-                + fs * 0.10
+                ns * 0.75
+                + ins * 0.10
+                + ss * 0.10
+                + fs * 0.05
             )
 
+            # Jei pavadinimo atitikimas labai silpnas,
+            # ingredientas / forma negali padaryti
+            # kandidato "labai patikimu".
+            if ns < 0.55:
+
+                total = min(
+                    total,
+                    0.54
+                )
+
+            # Jei pavadinimas beveik tikslus,
+            # suteikiame jam aiškų prioritetą.
+            if ns >= 0.95:
+
+                total = max(
+                    total,
+                    0.80
+                )
+
             result = {
+
                 "name": name,
+
                 "ingredient": clean_value(
                     row.get(
                         "veiklioji_medz_lt"
                     )
                 ),
+
                 "strength": clean_value(
-                    row.get("stiprumas")
+                    row.get(
+                        "stiprumas"
+                    )
                 ),
+
                 "form": clean_value(
                     row.get(
                         "farmacine_forma_lt"
                     )
                 ),
+
                 "route": clean_value(
                     row.get(
                         "vartojimo_budas"
                     )
                 ),
+
                 "score": total,
+
                 "name_score": ns,
+
                 "ingredient_score": ins,
+
                 "strength_score": ss,
+
                 "form_score": fs
             }
 
@@ -1313,23 +1552,51 @@ def rank_vvkt_candidates(
                 best_result is None
                 or total > best_result["score"]
             ):
+
                 best_result = result
 
         if best_result is not None:
-            results.append(best_result)
+
+            results.append(
+                best_result
+            )
+
+    # -----------------------------------------------------
+    # 4. RŪŠIUOJAME
+    # -----------------------------------------------------
 
     results.sort(
-        key=lambda x: x["score"],
+        key=lambda x: (
+            x["score"],
+            x["name_score"]
+        ),
         reverse=True
     )
 
-    return [
-        x
-        for x in results
-        if x["score"] >= 0.28
-    ][:top_n]
+    # -----------------------------------------------------
+    # 5. PAŠALINAME LABAI SILPNUS REZULTATUS
+    # -----------------------------------------------------
 
+    filtered = []
 
+    for result in results:
+
+        # Reikalaujame bent šiokio tokio
+        # pavadinimo įrodymo.
+        if result["name_score"] < 0.55:
+            continue
+
+        if result["score"] < 0.45:
+            continue
+
+        filtered.append(
+            result
+        )
+
+        if len(filtered) >= top_n:
+            break
+
+    return filtered
 # =========================================================
 # DIZAINAS
 # =========================================================
