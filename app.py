@@ -86,8 +86,21 @@ if vvkt_query:
         if vvkt_query.lower() in name.lower()
     ][:20]
 
-    if matches:
-        st.selectbox("Rasti preparatai", matches)
+   if matches:
+    selected_vvkt = st.selectbox("Rasti preparatai", matches)
+
+    selected_rows = vvkt[vvkt["preparato_pav"] == selected_vvkt]
+
+    if not selected_rows.empty:
+        row = selected_rows.iloc[0]
+
+        st.markdown("#### 💊 Preparato informacija")
+        st.write("**Pavadinimas:**", row.get("preparato_pav", "—"))
+        st.write("**Veiklioji medžiaga:**", row.get("veiklioji_medz_lt", "—"))
+        st.write("**Stiprumas:**", row.get("stiprumas", "—"))
+        st.write("**Farmacinė forma:**", row.get("farmacine_forma_lt", "—"))
+        st.write("**Vartojimo būdas:**", row.get("vartojimo_budas", "—"))
+        st.write("**Recepto poreikis:**", row.get("recepto_poreikis", "—"))
     else:
         st.info("Pagal įvestą pavadinimą preparatų nerasta.")
 st.divider()
