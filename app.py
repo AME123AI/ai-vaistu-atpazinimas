@@ -56,7 +56,14 @@ def load_vvkt():
         low_memory=False
     )
 
+@st.cache_data
+def load_ingredient_knowledge():
+    return pd.read_csv(
+        ROOT / "ingredient_knowledge.csv"
+    )
 
+
+ingredient_knowledge = load_ingredient_knowledge()
 model = load_model()
 classes = list(model.classes_)
 
@@ -158,6 +165,57 @@ def get_vvkt_row(name):
 
 
 def get_vvkt_ingredient(name):
+    def get_ingredient_knowledge(ingredient):
+    if not ingredient:
+        return None
+
+    target = normalize_text(ingredient)
+
+    matches = ingredient_knowledge[
+        ingredient_knowledge["ingredient"]
+        .fillna("")
+        .astype(str)
+        .apply(normalize_text)
+        == target
+    ]
+
+    if matches.empty:
+        return None
+
+    return matches.iloc[0]
+
+
+def show_ingredient_explanation(drug_name, ingredient):
+    knowledge = get_ingredient_knowledge(
+        ingredient
+    )
+
+    if knowledge is None:
+        st.markdown(
+            f"**{drug_name} – {ingredient or 'veiklioji medžiaga nenustatyta'}:** "
+            "šios veikliosios medžiagos farmakologinis profilis "
+            "dar neįtrauktas į patikrintą prototipo bazę."
+        )
+        return False
+
+    group = clean_value(
+        knowledge.get("group")
+    )
+
+    mechanism = clean_value(
+        knowledge.get("mechanism")
+    )
+
+    effect = clean_value(
+        knowledge.get("effect")
+    )
+
+    st.markdown(
+        f"**{drug_name} – {ingredient}:** "
+        f"{group}. {mechanism} {effect}"
+    )
+
+    return True
     row = get_vvkt_row(name)
 
     if row is None:
@@ -1172,85 +1230,149 @@ if st.button(
         # PORINĖS SĄVEIKOS
         # -------------------------------------------------
 
-        st.markdown(
-            "### 🔬 Sąveikos analizė"
+        # -------------------------------------------------
+# KAIP VEIKIA KARTU
+# -------------------------------------------------
+
+st.markdown(
+    "### 🔬 KAIP ŠIE VAISTAI VEIKIA KARTU"
+)
+
+known_first = show_ingredient_explanation(
+    first,
+    first_ingredient
+)
+
+known_second = show_ingredient_explanation(
+    second,
+    second_ingredient
+)
+
+rules = find_interactions(
+    first_ingredient,
+    second_ingredient
+)
+
+if known_first and known_second:
+
+    st.markdown(
+        "#### Bendras poveikis"
+    )
+
+    first_info = get_ingredient_knowledge(
+        first_ingredient
+    )
+
+    second_info = get_ingredient_knowledge(
+        second_ingredient
+    )
+
+    first_group = clean_value(
+        first_info.get("group")
+    )
+
+    second_group = clean_value(
+        second_info.get("group")
+    )
+
+    st.write(
+        f"{first_ingredient} ({first_group}) ir "
+        f"{second_ingredient} ({second_group}) "
+        "veikia skirtingais farmakologiniais mechanizmais. "
+        f"{clean_value(first_info.get('effect'))} "
+        f"{clean_value(second_info.get('effect'))}"
+    )
+
+if rules:
+
+    st.markdown(
+        "#### Žinoma porinė sąveika"
+    )
+
+    for rule in rules:
+
+        st.warning(
+            clean_value(
+                rule.get("description")
+            )
         )
 
-        rules = find_interactions(
-            first_ingredient,
-            second_ingredient
+        source = clean_value(
+            rule.get("source")
         )
 
-        if rules:
-
-            for rule in rules:
-
-                description = clean_value(
-                    rule.get(
-                        "description"
-                    )
-                )
-
-                source = clean_value(
-                    rule.get(
-                        "source"
-                    )
-                )
-
-                st.warning(
-                    description
-                )
-
-                if source != "—":
-
-                    st.caption(
-                        "Šaltinis: "
-                        + source
-                    )
-
-            st.markdown(
-                "### 📋 Išvada"
+        if source != "—":
+            st.caption(
+                "Šaltinis: " + source
             )
 
-            st.info(
-                "Šiai veikliųjų medžiagų porai "
-                "prototipo bazėje yra konkreti "
-                "patikrinta sąveikos taisyklė. "
-                "Vertinant realų vartojimą reikia "
-                "atsižvelgti ir į dozę, vartojimo "
-                "būdą, kitas ligas bei kitus "
-                "vartojamus vaistus."
-            )
+else:
 
-        else:
+    st.caption(
+        "Šiai konkrečiai veikliųjų medžiagų porai "
+        "prototipo patikrintų porinių sąveikų bazėje "
+        "atskira taisyklė neįrašyta."
+    )
 
-            st.info(
-                "Dabartinėje prototipo sąveikų "
-                "bazėje šiai veikliųjų medžiagų "
-                "porai nėra įrašytos konkrečios "
-                "patikrintos porinės taisyklės."
-            )
 
-            st.warning(
-                "Tai nereiškia, kad preparatus "
-                "saugu vartoti kartu. Ši prototipo "
-                "versija neturi pakankamai duomenų "
-                "automatinei medicininei išvadai "
-                "apie šią porą pateikti."
-            )
+st.markdown(
+    "#### 📋 Išvada"
+)
 
-            st.markdown(
-                "### 📋 Išvada"
-            )
+if known_first and known_second:
+
+    st.info(
+        "Pagal veikimo mechanizmus šių veikliųjų "
+        "medžiagų poveikiai yra skirtingi ir gali būti "
+        "susiję su skirtingomis simptomų grandimis. "
+        "Vien veikimo mechanizmų palyginimas nepatvirtina, "
+        "kad konkretų derinį saugu vartoti kartu. "
+        "Vertinant vartojimą reikia atsižvelgti į dozes, "
+        "vartojimo būdą, kontraindikacijas, kitus "
+        "vartojamus vaistus ir konkrečių preparatų informaciją."
+    )
+
+else:
+
+    st.warning(
+        "Bent vienos veikliosios medžiagos patikrinto "
+        "farmakologinio profilio prototipo bazėje dar nėra, "
+        "todėl automatinė išvada nepateikiama."
+    )
+
+
+st.markdown(
+    "#### 📚 Šaltiniai"
+)
+
+shown_sources = set()
+
+for ingredient in [
+    first_ingredient,
+    second_ingredient
+]:
+
+    info = get_ingredient_knowledge(
+        ingredient
+    )
+
+    if info is not None:
+
+        source = clean_value(
+            info.get("source")
+        )
+
+        if (
+            source != "—"
+            and source not in shown_sources
+        ):
 
             st.write(
-                "Norint paaiškinti, kaip šios "
-                "veikliosios medžiagos veikia kartu, "
-                "reikia patikrinto farmakologinio "
-                "šaltinio apie jų veikimo mechanizmus "
-                "ir galimas tarpusavio sąveikas. "
-                "Vien VVKT registracijos duomenų tam "
-                "nepakanka."
+                f"• {source}"
+            )
+
+            shown_sources.add(
+                source
             )
 
         # -------------------------------------------------
