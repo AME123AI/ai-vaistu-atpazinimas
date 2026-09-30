@@ -140,8 +140,8 @@ uploaded = st.file_uploader(
 
 if "first_drug" not in st.session_state:
     st.session_state.first_drug = None
-
-
+if "first_vvkt_drug" not in st.session_state:
+    st.session_state.first_vvkt_drug = None
 # =========================================================
 # OCR + HOG ATPAŽINIMAS
 # =========================================================
@@ -451,7 +451,14 @@ if uploaded:
             ocr_suggestions,
             key="ocr_vvkt_match"
         )
-
+        if st.button(
+            "✅ Patvirtinti šį VVKT preparatą",
+            key="confirm_ocr_vvkt"
+        ):
+            st.session_state.first_vvkt_drug = ocr_selected
+            st.success(
+                f"Patvirtintas preparatas: {ocr_selected}"
+            )
         selected_rows = vvkt[
             vvkt["preparato_pav"] == ocr_selected
         ]
@@ -657,21 +664,63 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+if st.session_state.first_vvkt_drug:
 
-default_index = (
-    classes.index(st.session_state.first_drug)
-    if st.session_state.first_drug in classes
-    else 0
-)
+    first = st.session_state.first_vvkt_drug
 
-first = st.selectbox(
-    "Pirmasis vaistas",
-    classes,
-    index=default_index
-)
+    st.success(
+        f"Pasirinktas pirmasis preparatas: {first}"
+    )
 
-st.session_state.first_drug = first
+    first_rows = vvkt[
+        vvkt["preparato_pav"] == first
+    ]
 
+    if not first_rows.empty:
+        first_row = first_rows.iloc[0]
+
+        st.write(
+            "**Veiklioji medžiaga:**",
+            first_row.get("veiklioji_medz_lt", "—")
+        )
+
+        st.write(
+            "**Stiprumas:**",
+            first_row.get("stiprumas", "—")
+        )
+
+        st.write(
+            "**Farmacinė forma:**",
+            first_row.get("farmacine_forma_lt", "—")
+        )
+
+    if st.button(
+        "🔄 Pasirinkti kitą pirmąjį preparatą"
+    ):
+        st.session_state.first_vvkt_drug = None
+        st.rerun()
+
+else:
+
+    st.info(
+        "Pirmiausia įkelkite pakuotės nuotrauką "
+        "ir patvirtinkite vieną iš VVKT pasiūlytų preparatų."
+    )
+
+    default_index = (
+        classes.index(st.session_state.first_drug)
+        if st.session_state.first_drug in classes
+        else 0
+    )
+
+    baseline_first = st.selectbox(
+        "Arba pasirinkite bazinio modelio preparatą",
+        classes,
+        index=default_index
+    )
+
+    first = baseline_first
+    st.session_state.first_drug = baseline_first
 
 # =========================================================
 # 4. ANTRAS VAISTAS
@@ -684,11 +733,55 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-second = st.selectbox(
-    "Antrasis vaistas",
-    classes,
-    index=1 if len(classes) > 1 else 0
+second_query = st.text_input(
+    "Ieškokite antro vaisto VVKT kataloge",
+    placeholder="Pvz. Celebrex, Atacand, Diflucan..."
 )
+
+second = None
+
+if second_query:
+
+    second_matches = [
+        name
+        for name in vvkt_names
+        if second_query.lower() in name.lower()
+    ][:20]
+
+    if second_matches:
+
+        second = st.selectbox(
+            "Pasirinkite antrą preparatą",
+            second_matches,
+            key="second_vvkt_drug"
+        )
+
+        second_rows = vvkt[
+            vvkt["preparato_pav"] == second
+        ]
+
+        if not second_rows.empty:
+            second_row = second_rows.iloc[0]
+
+            st.write(
+                "**Veiklioji medžiaga:**",
+                second_row.get("veiklioji_medz_lt", "—")
+            )
+
+            st.write(
+                "**Stiprumas:**",
+                second_row.get("stiprumas", "—")
+            )
+
+            st.write(
+                "**Farmacinė forma:**",
+                second_row.get("farmacine_forma_lt", "—")
+            )
+
+    else:
+        st.info(
+            "Pagal įvestą pavadinimą VVKT preparatų nerasta."
+        )
 
 
 # =========================================================
@@ -760,7 +853,12 @@ if st.button(
     type="primary"
 ):
 
-    if first == second:
+    if not second:
+        st.warning(
+            "Pirmiausia pasirinkite antrą preparatą."
+        )
+
+    elif first == second:
 
         st.error(
             "Pasirinkite du skirtingus preparatus."
