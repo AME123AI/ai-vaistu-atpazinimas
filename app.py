@@ -437,7 +437,7 @@ if uploaded:
         if len(ocr_suggestions) == 1:
             st.success(
                 "Pagal OCR informaciją rastas "
-                "1 atitinkantis VVKT preparatas."
+                    "1 atitinkantis VVKT preparatas."
             )
         else:
             st.info(
@@ -451,19 +451,13 @@ if uploaded:
             ocr_suggestions,
             key="ocr_vvkt_match"
         )
-            ocr_suggestions,
-            key="ocr_vvkt_match"
-        )ey="ocr_vvkt_match"
-        )
 
         selected_rows = vvkt[
             vvkt["preparato_pav"] == ocr_selected
         ]
 
         if not selected_rows.empty:
-
             row = selected_rows.iloc[0]
-
                         st.markdown(
                 "#### 💊 Patvirtinto preparato VVKT informacija"
             )
