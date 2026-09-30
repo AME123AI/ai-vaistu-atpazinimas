@@ -1172,7 +1172,93 @@ def get_ocr_lines(text):
 
     return list(dict.fromkeys(lines))
 
+GENERIC_OCR_WORDS = {
+    # Farmacinės formos
+    "tablete",
+    "tabletes",
+    "tableciu",
+    "tablet",
+    "tablets",
+    "kapsule",
+    "kapsules",
+    "kapsuliu",
+    "capsule",
+    "capsules",
+    "sirupas",
+    "syrup",
+    "tirpalas",
+    "solution",
+    "gelis",
+    "kremas",
+    "cream",
+    "tepalas",
+    "milteliai",
+    "granules",
 
+    # Pakuotės / vartojimo žodžiai
+    "plevele",
+    "dengtos",
+    "dengta",
+    "geriamasis",
+    "geriamieji",
+    "injekcinis",
+    "modified",
+    "release",
+    "prolonged",
+
+    # Dažni cheminiai / ingredientų žodžiai,
+    # kurie vieni nėra prekės ženklas
+    "hydrochloridum",
+    "hydrochloride",
+    "hidrochloridas",
+    "hidrochlorido",
+    "chloridum",
+    "chloride",
+    "chloridas",
+    "chlorido",
+    "natrii",
+    "sodium",
+    "kalio",
+    "potassium",
+
+    # Matavimo vienetai
+    "mg",
+    "mcg",
+    "ug",
+    "ml"
+}
+
+
+def is_useful_brand_fragment(fragment):
+    fragment = normalize_text(fragment)
+
+    if not fragment:
+        return False
+
+    if len(fragment) < 4:
+        return False
+
+    # Vien skaičiai, dozės ir simboliai
+    if re.fullmatch(
+        r"[\d\s.,/%+-]+",
+        fragment
+    ):
+        return False
+
+    words = fragment.split()
+
+    if not words:
+        return False
+
+    # Jei visas fragmentas sudarytas tik iš bendrinių
+    # farmacinių žodžių, jis nėra prekės ženklo įrodymas.
+    if all(
+        word in GENERIC_OCR_WORDS
+        for word in words
+    ):
+        return False
+
+    return True
 def get_brand_fragments(text):
     """
     Sukuria fragmentus, kurie labiausiai tinka
@@ -1184,7 +1270,10 @@ def get_brand_fragments(text):
     for line in get_ocr_lines(text):
 
         # Visa OCR eilutė
-        if 3 <= len(line) <= 50:
+        if (
+            3 <= len(line) <= 50
+            and is_useful_brand_fragment(line)
+        ):
             fragments.append(line)
 
         words = line.split()
@@ -1194,7 +1283,10 @@ def get_brand_fragments(text):
 
             # Preparatų pavadinimams trumpesni nei
             # 4 simbolių fragmentai per daug nepatikimi
-            if len(word) >= 4:
+            if (
+                len(word) >= 4
+                and is_useful_brand_fragment(word)
+            ):
                 fragments.append(word)
 
         # 2 ir 3 žodžių preparatų pavadinimai
@@ -1211,7 +1303,10 @@ def get_brand_fragments(text):
                     words[i:i + size]
                 )
 
-                if len(fragment) >= 5:
+                if (
+                    len(fragment) >= 5
+                    and is_useful_brand_fragment(fragment)
+                ):
                     fragments.append(fragment)
 
     return list(
