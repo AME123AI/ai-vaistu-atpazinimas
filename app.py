@@ -559,69 +559,102 @@ def prepare_ocr_images(image):
     return prepared_images
 
 
-with st.spinner(
-    "Analizuojama pakuotė..."
-):
+def prepare_fast_ocr_image(image):
+    """
+    Paruošia telefono nuotrauką greitam OCR.
+    """
+    base = ImageOps.exif_transpose(image).convert("RGB")
 
-    # -------------------------------------------------
-    # 1 ETAPAS – GREITAS OCR
-    # -------------------------------------------------
+    width, height = base.size
+    max_side = 1600
 
-    fast_ocr_text = run_fast_ocr(
-        image
+    if max(width, height) > max_side:
+        scale = max_side / max(width, height)
+
+        base = base.resize(
+            (
+                max(1, int(width * scale)),
+                max(1, int(height * scale))
+            ),
+            Image.Resampling.LANCZOS
+        )
+
+    return base
+
+
+def run_fast_ocr(image):
+    """
+    Pirmas, greitas OCR etapas.
+    """
+    base = prepare_fast_ocr_image(image)
+
+    gray = ImageOps.grayscale(base)
+    gray = ImageOps.autocontrast(gray)
+
+    try:
+        text = pytesseract.image_to_string(
+            gray,
+            config="--psm 11"
+        )
+
+        return text.strip()
+
+    except Exception:
+        return ""
+
+
+def run_fallback_ocr(image, fast_text=""):
+    """
+    Papildomas OCR naudojamas tik tada,
+    kai greitas OCR nedavė tinkamo VVKT kandidato.
+    """
+    base = prepare_fast_ocr_image(image)
+
+    texts = []
+
+    if fast_text:
+        texts.append(fast_text)
+
+    for angle in (0, 90, 180, 270):
+
+        rotated = base.rotate(
+            angle,
+            expand=True
+        )
+
+        gray = ImageOps.grayscale(rotated)
+
+        processed = ImageOps.autocontrast(gray)
+
+        processed = ImageEnhance.Contrast(
+            processed
+        ).enhance(1.6)
+
+        try:
+            text = pytesseract.image_to_string(
+                processed,
+                config="--psm 11"
+            ).strip()
+
+            if text:
+                texts.append(text)
+
+        except Exception:
+            continue
+
+    unique_texts = list(
+        dict.fromkeys(texts)
     )
 
-    fast_candidates = (
-        rank_vvkt_candidates(
-            fast_ocr_text,
-            top_n=5
-        )
-    )
+    return "\n".join(unique_texts)
 
-    # -------------------------------------------------
-    # AR GREITO OCR PAKANKA?
-    # -------------------------------------------------
 
-    # Jei VVKT jau rado bent vieną realų kandidatą,
-    # papildomo OCR nedarome.
-    #
-    # Jei kandidato nėra, vien tokie duomenys kaip
-    # "30 mg" ir "tabletės" nelaikomi pakankamu
-    # vaisto atpažinimu.
-
-    if fast_candidates:
-
-        ocr_text = (
-            fast_ocr_text
-        )
-
-        ranked_candidates = (
-            fast_candidates
-        )
-
-    else:
-
-        # ---------------------------------------------
-        # 2 ETAPAS – FALLBACK OCR
-        # ---------------------------------------------
-
-        fallback_text = (
-            run_fallback_ocr(
-                image,
-                fast_text=fast_ocr_text
-            )
-        )
-
-        ocr_text = (
-            fallback_text
-        )
-
-        ranked_candidates = (
-            rank_vvkt_candidates(
-                ocr_text,
-                top_n=5
-            )
-        )
+def run_ocr(image):
+    """
+    Suderinamumo funkcija.
+    Pagal nutylėjimą atliekamas greitas OCR.
+    """
+    return run_fast_ocr(image)
 # =========================================================
 # OCR – STIPRUMO ATPAŽINIMAS
 # =========================================================
