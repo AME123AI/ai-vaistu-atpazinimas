@@ -435,8 +435,8 @@ def find_vvkt_candidates(
 
         # Per silpnų pavadinimų net nevertiname toliau.
         # Tai apsaugo nuo atsitiktinių VVKT kandidatų.
-       if name_score < 0.68:
-    continue
+        if name_score < 0.68:
+            continue
         strength_score = 0.0
 
         if strengths:
