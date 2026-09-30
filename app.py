@@ -390,7 +390,35 @@ if uploaded:
             fuzzy_matches.extend(matches)
 
         ocr_suggestions = fuzzy_matches
+    # =====================================================
+    # PARODOME, KĄ OCR PAVYKO ATPAŽINTI
+    # =====================================================
 
+    detected_parts = []
+
+    if "detected_ingredient" in locals() and detected_ingredient:
+        detected_parts.append(
+            f"Veiklioji medžiaga: {detected_ingredient}"
+        )
+
+    if "detected_strength" in locals() and detected_strength:
+        detected_parts.append(
+            f"Stiprumas: {detected_strength}"
+        )
+
+    if "plevele dengtos tabletes" in normalized_ocr:
+        detected_parts.append(
+            "Farmacinė forma: plėvele dengtos tabletės"
+        )
+    elif "tabletes" in normalized_ocr:
+        detected_parts.append(
+            "Farmacinė forma: tabletės"
+        )
+
+    if detected_parts:
+        st.markdown("### 🧾 OCR aptiko")
+        for part in detected_parts:
+            st.write("• " + part)
     # Pašaliname pasikartojimus
     ocr_suggestions = list(
         dict.fromkeys(ocr_suggestions)
@@ -400,16 +428,29 @@ if uploaded:
     ocr_suggestions = ocr_suggestions[:20]
 
 
-    if ocr_suggestions:
+        if ocr_suggestions:
 
         st.markdown(
-            "### 🔎 OCR pasiūlyti VVKT preparatai"
+            "### 🔎 VVKT atitinkantys preparatai"
         )
 
+        if len(ocr_suggestions) == 1:
+            st.success(
+                "Pagal OCR informaciją rastas "
+                "1 atitinkantis VVKT preparatas."
+            )
+        else:
+            st.info(
+                f"Pagal OCR informaciją rasti "
+                f"{len(ocr_suggestions)} galimi VVKT preparatai. "
+                f"Pasirinkite preparatą pagal pakuotę."
+            )
+
         ocr_selected = st.selectbox(
-            "Pasirinkite labiausiai atitinkantį preparatą",
+            "Patvirtinkite preparatą",
             ocr_suggestions,
             key="ocr_vvkt_match"
+        )ey="ocr_vvkt_match"
         )
 
         selected_rows = vvkt[
@@ -420,10 +461,9 @@ if uploaded:
 
             row = selected_rows.iloc[0]
 
-            st.markdown(
-                "#### 💊 OCR rasto preparato informacija"
+                        st.markdown(
+                "#### 💊 Patvirtinto preparato VVKT informacija"
             )
-
             st.write(
                 "**Pavadinimas:**",
                 row.get("preparato_pav", "—")
