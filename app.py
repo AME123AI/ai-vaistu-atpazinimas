@@ -435,75 +435,196 @@ def find_group_interaction(
 
 
 # =========================================================
-# OCR
+# OCR – TELEFONO NUOTRAUKOMS
 # =========================================================
 
 def prepare_ocr_images(image):
+    """
+    Paruošia kelias tos pačios nuotraukos versijas OCR.
 
-    images = [image]
+    Tikrinama:
+    - telefono EXIF orientacija;
+    - 0°, 90°, 180° ir 270°;
+    - originalus vaizdas;
+    - pilkumo vaizdas;
+    - automatinis kontrastas;
+    - sustiprintas kontrastas;
+    - paryškintos raidės.
+    """
 
-    width, height = image.size
+    # Sutvarkome telefono nuotraukos EXIF orientaciją
+    image = ImageOps.exif_transpose(
+        image
+    ).convert("RGB")
 
-    enlarged = image.resize(
-        (
-            width * 2,
-            height * 2
+    prepared_images = []
+
+    # Tikriname visas keturias galimas teksto orientacijas
+    for angle in (0, 90, 180, 270):
+
+        rotated = image.rotate(
+            angle,
+            expand=True
         )
-    )
 
-    images.append(enlarged)
+        # ---------------------------------------------
+        # TELEFONO NUOTRAUKOS DYDŽIO OPTIMIZAVIMAS
+        # ---------------------------------------------
 
-    gray = ImageOps.grayscale(
-        enlarged
-    )
+        width, height = rotated.size
 
-    gray = ImageOps.autocontrast(
-        gray
-    )
+        max_side = 1800
 
-    images.append(gray)
+        if max(width, height) > max_side:
 
-    contrast = ImageEnhance.Contrast(
-        gray
-    ).enhance(2.0)
+            scale = (
+                max_side
+                / max(width, height)
+            )
 
-    images.append(contrast)
+            new_width = max(
+                1,
+                int(width * scale)
+            )
 
-    return images
+            new_height = max(
+                1,
+                int(height * scale)
+            )
+
+            rotated = rotated.resize(
+                (
+                    new_width,
+                    new_height
+                ),
+                Image.Resampling.LANCZOS
+            )
+
+        # ---------------------------------------------
+        # 1. ORIGINALI VERSIJA
+        # ---------------------------------------------
+
+        prepared_images.append(
+            rotated
+        )
+
+        # ---------------------------------------------
+        # 2. PILKUMO VERSIJA
+        # ---------------------------------------------
+
+        gray = ImageOps.grayscale(
+            rotated
+        )
+
+        prepared_images.append(
+            gray
+        )
+
+        # ---------------------------------------------
+        # 3. AUTOMATINIS KONTRASTAS
+        # ---------------------------------------------
+
+        autocontrast = ImageOps.autocontrast(
+            gray
+        )
+
+        prepared_images.append(
+            autocontrast
+        )
+
+        # ---------------------------------------------
+        # 4. STIPRESNIS KONTRASTAS
+        # ---------------------------------------------
+
+        contrast = ImageEnhance.Contrast(
+            autocontrast
+        ).enhance(1.8)
+
+        prepared_images.append(
+            contrast
+        )
+
+        # ---------------------------------------------
+        # 5. PARYŠKINTOS RAIDĖS
+        # ---------------------------------------------
+
+        sharp = ImageEnhance.Sharpness(
+            contrast
+        ).enhance(2.0)
+
+        prepared_images.append(
+            sharp
+        )
+
+    return prepared_images
 
 
 def run_ocr(image):
+    """
+    Paleidžia Tesseract OCR kelioms nuotraukos
+    orientacijoms ir keliems teksto analizės režimams.
+    """
 
     texts = []
 
-    for prepared in prepare_ocr_images(image):
+    prepared_images = prepare_ocr_images(
+        image
+    )
 
-        for config in [
-            "--psm 6",
-            "--psm 11"
-        ]:
+    # Skirtingi Tesseract puslapio analizės režimai:
+    #
+    # PSM 6  – vientisas teksto blokas
+    # PSM 11 – išsklaidytas tekstas
+    # PSM 12 – išsklaidytas tekstas su orientacijos analize
+
+    configs = [
+        "--psm 6",
+        "--psm 11",
+        "--psm 12"
+    ]
+
+    for prepared in prepared_images:
+
+        for config in configs:
 
             try:
 
-                text = pytesseract.image_to_string(
-                    prepared,
-                    config=config
+                text = (
+                    pytesseract.image_to_string(
+                        prepared,
+                        config=config
+                    )
                 )
 
-                if text.strip():
+                text = text.strip()
+
+                if text:
                     texts.append(text)
 
             except Exception:
-                pass
+                # Vieno OCR bandymo klaida neturi
+                # sustabdyti visos programos
+                continue
 
-    return "\n".join(
+    # Pašaliname identiškus OCR rezultatus
+    unique_texts = list(
         dict.fromkeys(texts)
     )
 
+    return "\n".join(
+        unique_texts
+    )
+
+
+# =========================================================
+# OCR – STIPRUMO ATPAŽINIMAS
+# =========================================================
 
 def extract_strengths(text):
 
-    normalized = normalize_text(text)
+    normalized = normalize_text(
+        text
+    )
 
     matches = re.findall(
         r"\b\d+(?:[.,]\d+)?\s*"
@@ -515,7 +636,10 @@ def extract_strengths(text):
 
     for item in matches:
 
-        item = item.replace(",", ".")
+        item = item.replace(
+            ",",
+            "."
+        )
 
         item = re.sub(
             r"\s+",
@@ -529,46 +653,121 @@ def extract_strengths(text):
     return results
 
 
+# =========================================================
+# OCR – FARMACINĖS FORMOS ATPAŽINIMAS
+# =========================================================
+
 def detect_form(text):
 
-    t = normalize_text(text)
+    t = normalize_text(
+        text
+    )
 
     rules = [
+
         (
-            ["plevele", "dengtos", "tabletes"],
+            [
+                "plevele",
+                "dengtos",
+                "tabletes"
+            ],
             "plėvele dengtos tabletės"
         ),
+
         (
-            ["minkstosios", "kapsules"],
+            [
+                "minkstosios",
+                "kapsules"
+            ],
             "minkštosios kapsulės"
         ),
+
         (
-            ["injekcinis", "tirpalas"],
+            [
+                "kietosios",
+                "kapsules"
+            ],
+            "kietosios kapsulės"
+        ),
+
+        (
+            [
+                "injekcinis",
+                "tirpalas"
+            ],
             "injekcinis tirpalas"
         ),
+
         (
-            ["geriamasis", "tirpalas"],
+            [
+                "geriamasis",
+                "tirpalas"
+            ],
             "geriamasis tirpalas"
         ),
+
         (
-            ["tabletes"],
+            [
+                "geriamieji",
+                "lasai"
+            ],
+            "geriamieji lašai"
+        ),
+
+        (
+            [
+                "tabletes"
+            ],
             "tabletės"
         ),
+
         (
-            ["kapsules"],
+            [
+                "kapsules"
+            ],
             "kapsulės"
         ),
+
         (
-            ["sirupas"],
+            [
+                "sirupas"
+            ],
             "sirupas"
         ),
+
         (
-            ["gelis"],
+            [
+                "gelis"
+            ],
             "gelis"
         ),
+
         (
-            ["kremas"],
+            [
+                "kremas"
+            ],
             "kremas"
+        ),
+
+        (
+            [
+                "tepalas"
+            ],
+            "tepalas"
+        ),
+
+        (
+            [
+                "milteliai"
+            ],
+            "milteliai"
+        ),
+
+        (
+            [
+                "granules"
+            ],
+            "granulės"
         )
     ]
 
@@ -578,12 +777,24 @@ def detect_form(text):
             word in t
             for word in words
         ):
+
             return form
 
     return None
 
 
+# =========================================================
+# OCR – TEKSTO FRAGMENTAI
+# =========================================================
+
 def build_ocr_fragments(text):
+    """
+    Iš OCR teksto sukuria trumpesnius fragmentus.
+
+    Tai leidžia rasti vaisto pavadinimą net tada,
+    kai Tesseract toje pačioje eilutėje perskaito
+    ir kitą tekstą.
+    """
 
     fragments = []
 
@@ -600,11 +811,17 @@ def build_ocr_fragments(text):
 
     for line in lines:
 
-        fragments.append(line)
+        fragments.append(
+            line
+        )
 
         words = line.split()
 
-        for size in range(1, 5):
+        # Tikriname 1–4 žodžių kombinacijas
+        for size in range(
+            1,
+            5
+        ):
 
             if len(words) < size:
                 continue
@@ -614,20 +831,35 @@ def build_ocr_fragments(text):
             ):
 
                 fragment = " ".join(
-                    words[i:i + size]
+                    words[
+                        i:i + size
+                    ]
                 )
 
                 if len(fragment) >= 3:
-                    fragments.append(fragment)
 
+                    fragments.append(
+                        fragment
+                    )
+
+    # Pašaliname pasikartojimus
     return list(
-        dict.fromkeys(fragments)
+        dict.fromkeys(
+            fragments
+        )
     )
 
 
+# =========================================================
+# OCR – VEIKLIOSIOS MEDŽIAGOS ATPAŽINIMAS
+# =========================================================
+
 def detect_ingredient(text):
 
-    if "veiklioji_medz_lt" not in vvkt.columns:
+    if (
+        "veiklioji_medz_lt"
+        not in vvkt.columns
+    ):
         return None
 
     ingredients = (
@@ -639,7 +871,13 @@ def detect_ingredient(text):
         .tolist()
     )
 
-    ocr_norm = normalize_text(text)
+    ocr_norm = normalize_text(
+        text
+    )
+
+    # ---------------------------------------------
+    # 1. TIKSLUS VEIKLIOSIOS MEDŽIAGOS RADIMAS
+    # ---------------------------------------------
 
     exact = []
 
@@ -653,16 +891,25 @@ def detect_ingredient(text):
             len(ing_norm) >= 5
             and ing_norm in ocr_norm
         ):
-            exact.append(ingredient)
+
+            exact.append(
+                ingredient
+            )
 
     if exact:
 
+        # Jei rasta daugiau nei viena,
+        # pasirenkame ilgiausią tikslų atitikmenį
         return max(
             exact,
             key=lambda x: len(
                 normalize_text(x)
             )
         )
+
+    # ---------------------------------------------
+    # 2. FUZZY VEIKLIOSIOS MEDŽIAGOS PAIEŠKA
+    # ---------------------------------------------
 
     normalized_map = {
         normalize_text(x): x
@@ -676,7 +923,16 @@ def detect_ingredient(text):
     best_name = None
     best_score = 0.0
 
-    for fragment in build_ocr_fragments(text):
+    fragments = build_ocr_fragments(
+        text
+    )
+
+    for fragment in fragments:
+
+        # Labai trumpi fragmentai sukelia
+        # per daug klaidingų atitikimų
+        if len(fragment) < 5:
+            continue
 
         matches = get_close_matches(
             fragment,
@@ -700,11 +956,12 @@ def detect_ingredient(text):
             best_score = score
 
             best_name = (
-                normalized_map[match]
+                normalized_map[
+                    match
+                ]
             )
 
     return best_name
-
 
 # =========================================================
 # OCR PAVADINIMO KANDIDATAI
@@ -1150,9 +1407,9 @@ uploaded = st.file_uploader(
 
 if uploaded:
 
-    image = Image.open(
-        uploaded
-    ).convert("RGB")
+   image = ImageOps.exif_transpose(
+    Image.open(uploaded)
+).convert("RGB")
 
     st.image(
         image,
