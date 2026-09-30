@@ -1186,9 +1186,14 @@ def find_name_candidates(
     max_names=50
 ):
     """
-    Ieško preparato pavadinimo VVKT registre.
+    Greita dviejų pakopų VVKT preparato pavadinimo paieška.
 
-    Svarbiausias signalas yra prekės ženklas.
+    1. Pirmiausia atliekama labai pigi tiksli / dalinė paieška.
+    2. Fuzzy palyginimas vykdomas tik su sumažintu
+       galimų VVKT pavadinimų rinkiniu.
+
+    Taip išvengiama situacijos, kai kiekvienas OCR fragmentas
+    lyginamas su visu VVKT preparatų katalogu.
     """
 
     fragments = get_brand_fragments(
@@ -1198,18 +1203,207 @@ def find_name_candidates(
     if not fragments:
         return []
 
-    scores = {}
+    # -----------------------------------------------------
+    # PARUOŠIAME PRASMINGUS OCR FRAGMENTUS
+    # -----------------------------------------------------
+
+    useful_fragments = []
+
+    for fragment in fragments:
+
+        fragment = normalize_text(
+            fragment
+        )
+
+        if len(fragment) < 4:
+            continue
+
+        # Skaičiai / stiprumai nėra geri prekės ženklo
+        # paieškos signalai.
+        if re.fullmatch(
+            r"[\d\s.,/%+-]+",
+            fragment
+        ):
+            continue
+
+        useful_fragments.append(
+            fragment
+        )
+
+    useful_fragments = list(
+        dict.fromkeys(
+            useful_fragments
+        )
+    )
+
+    if not useful_fragments:
+        return []
+
+    # -----------------------------------------------------
+    # 1. GREITA TIKSLI / DALINĖ PAIEŠKA
+    # -----------------------------------------------------
+
+    exact_scores = {}
+
+    # Normalizuojame OCR tekstą vieną kartą.
+    normalized_ocr = normalize_text(
+        ocr_text
+    )
 
     for name in vvkt_names:
 
-        drug = normalize_text(name)
+        drug = normalize_text(
+            name
+        )
 
         if len(drug) < 3:
             continue
 
+        # Visas VVKT pavadinimas aiškiai matomas OCR tekste.
+        if (
+            len(drug) >= 4
+            and drug in normalized_ocr
+        ):
+
+            exact_scores[name] = 1.0
+            continue
+
+        # Tikriname, ar OCR fragmentas yra didelė
+        # preparato pavadinimo dalis.
+        for fragment in useful_fragments:
+
+            if (
+                len(fragment) >= 5
+                and fragment in drug
+            ):
+
+                coverage = (
+                    len(fragment)
+                    / max(len(drug), 1)
+                )
+
+                if coverage >= 0.75:
+
+                    exact_scores[name] = max(
+                        exact_scores.get(
+                            name,
+                            0.0
+                        ),
+                        0.92
+                    )
+
+                    break
+
+    # Jei turime aiškių pavadinimo atitikimų,
+    # brangaus fuzzy etapo apskritai nereikia.
+    if exact_scores:
+
+        ranked = sorted(
+            exact_scores.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        return [
+            name
+            for name, _
+            in ranked[:max_names]
+        ]
+
+    # -----------------------------------------------------
+    # 2. SUMAŽINAME VVKT KANDIDATŲ RINKINĮ
+    # -----------------------------------------------------
+
+    # Fuzzy palyginimui neimsime viso registro.
+    # Kandidatą paliekame tik tada, kai jo pradžia / žodžio
+    # pradžia bent apytiksliai sutampa su OCR fragmentu.
+
+    reduced_names = []
+
+    fragment_prefixes = set()
+
+    for fragment in useful_fragments:
+
+        for word in fragment.split():
+
+            if len(word) >= 4:
+
+                fragment_prefixes.add(
+                    word[:3]
+                )
+
+    for name in vvkt_names:
+
+        drug = normalize_text(
+            name
+        )
+
+        if not drug:
+            continue
+
+        drug_words = drug.split()
+
+        prefixes = {
+            word[:3]
+            for word in drug_words
+            if len(word) >= 3
+        }
+
+        if (
+            prefixes
+            and fragment_prefixes
+            and prefixes.intersection(
+                fragment_prefixes
+            )
+        ):
+
+            reduced_names.append(
+                name
+            )
+
+    # OCR kartais suklysta jau pirmose raidėse.
+    # Tokiu atveju naudojame konservatyvų atsarginį
+    # kandidatų sąrašą pagal pirmąją raidę.
+
+    if not reduced_names:
+
+        first_letters = {
+            fragment[0]
+            for fragment in useful_fragments
+            if fragment
+        }
+
+        for name in vvkt_names:
+
+            drug = normalize_text(
+                name
+            )
+
+            if (
+                drug
+                and drug[0] in first_letters
+            ):
+
+                reduced_names.append(
+                    name
+                )
+
+            # Neleidžiame atsarginiam rinkiniui
+            # vėl išaugti iki viso VVKT katalogo.
+            if len(reduced_names) >= 1500:
+                break
+
+    # -----------------------------------------------------
+    # 3. FUZZY TIK SUMAŽINTAM RINKINIUI
+    # -----------------------------------------------------
+
+    scores = {}
+
+    for name in reduced_names:
+
         best = 0.0
 
-        for fragment in fragments:
+        for fragment in useful_fragments:
 
             score = brand_similarity(
                 name,
@@ -1222,8 +1416,6 @@ def find_name_candidates(
             if best >= 0.99:
                 break
 
-        # Silpnų atsitiktinių sutapimų
-        # į kandidatų sąrašą nededame
         if best >= 0.68:
 
             scores[name] = best
@@ -1239,7 +1431,6 @@ def find_name_candidates(
         for name, _
         in ranked[:max_names]
     ]
-
 
 # =========================================================
 # OCR BALAI
