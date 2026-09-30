@@ -57,7 +57,8 @@ if "first_drug" not in st.session_state:
 
 if uploaded:
     image = Image.open(uploaded).convert("RGB")
-        ocr_text = pytesseract.image_to_string(image)
+    ocr_text = pytesseract.image_to_string(image)
+
     with st.expander("🔤 OCR nuskaitytas tekstas"):
         st.text(ocr_text if ocr_text.strip() else "Teksto atpažinti nepavyko.")
     c1,c2 = st.columns(2)
