@@ -1921,39 +1921,37 @@ if uploaded:
         unsafe_allow_html=True
     )
 
-    with st.spinner(
+       with st.spinner(
         "Analizuojama pakuotė..."
     ):
 
-           # 1 etapas – greitas OCR
-    fast_ocr_text = run_fast_ocr(
-        image
-    )
-
-    fast_candidates = rank_vvkt_candidates(
-        fast_ocr_text,
-        top_n=5
-    )
-
-    # Jei greitas OCR jau rado VVKT kandidatą,
-    # papildomo OCR nereikia.
-    if fast_candidates:
-        ocr_text = fast_ocr_text
-        ranked_candidates = fast_candidates
-
-    else:
-        # 2 etapas – papildomas OCR
-        fallback_text = run_fallback_ocr(
-            image,
-            fast_text=fast_ocr_text
+        # 1 etapas – greitas OCR
+        fast_ocr_text = run_fast_ocr(
+            image
         )
 
-        ocr_text = fallback_text
-
-        ranked_candidates = rank_vvkt_candidates(
-            ocr_text,
+        fast_candidates = rank_vvkt_candidates(
+            fast_ocr_text,
             top_n=5
         )
+
+        if fast_candidates:
+            ocr_text = fast_ocr_text
+            ranked_candidates = fast_candidates
+
+        else:
+            # 2 etapas – papildomas OCR
+            fallback_text = run_fallback_ocr(
+                image,
+                fast_text=fast_ocr_text
+            )
+
+            ocr_text = fallback_text
+
+            ranked_candidates = rank_vvkt_candidates(
+                ocr_text,
+                top_n=5
+            )
 
     strengths = extract_strengths(
         ocr_text
