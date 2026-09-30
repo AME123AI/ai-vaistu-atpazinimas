@@ -398,8 +398,8 @@ if uploaded:
 
     if "detected_ingredient" in locals() and detected_ingredient:
         detected_parts.append(
-            f"Veiklioji medžiaga: {detected_ingredient}"
-        )
+        f"Veiklioji medžiaga: {detected_ingredient}"
+    )
 
     if "detected_strength" in locals() and detected_strength:
         detected_parts.append(
@@ -417,8 +417,10 @@ if uploaded:
 
     if detected_parts:
         st.markdown("### 🧾 OCR aptiko")
+
         for part in detected_parts:
             st.write("• " + part)
+
     # Pašaliname pasikartojimus
     ocr_suggestions = list(
         dict.fromkeys(ocr_suggestions)
@@ -427,9 +429,7 @@ if uploaded:
     # Rodome iki 20 kandidatų
     ocr_suggestions = ocr_suggestions[:20]
 
-
-        if ocr_suggestions:
-
+    if ocr_suggestions:
         st.markdown(
             "### 🔎 VVKT atitinkantys preparatai"
         )
@@ -448,6 +448,9 @@ if uploaded:
 
         ocr_selected = st.selectbox(
             "Patvirtinkite preparatą",
+            ocr_suggestions,
+            key="ocr_vvkt_match"
+        )
             ocr_suggestions,
             key="ocr_vvkt_match"
         )ey="ocr_vvkt_match"
