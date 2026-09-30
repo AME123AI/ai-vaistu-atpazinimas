@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 from skimage.feature import hog
-
+from difflib import get_close_matches
 ROOT = Path(__file__).parent
 st.set_page_config(page_title="AI vaistų atpažinimas", page_icon="💊", layout="wide")
 
@@ -22,13 +22,18 @@ def load_json(name):
 @st.cache_data
 def load_interactions():
     return pd.read_csv(ROOT / "interactions.csv")
-
+@st.cache_data
+def load_vvkt():
+    return pd.read_csv(ROOT / "PreparatasPakuote.csv")
 model = load_model()
 classes = list(model.classes_)
 drug_data = load_json("drug_profiles.json")
 ingredient_profiles = load_json("ingredient_profiles.json")
 interactions = load_interactions()
-
+vvkt = load_vvkt()
+vvkt = vvkt[vvkt["preparato_pav"].notna()].copy()
+vvkt["preparato_pav"] = vvkt["preparato_pav"].astype(str).str.strip()
+vvkt_names = sorted(vvkt["preparato_pav"].drop_duplicates().tolist())
 st.markdown("""
 <style>
 .block-container {max-width: 1150px; padding-top: 2rem;}
@@ -68,7 +73,26 @@ if uploaded:
             st.session_state.first_drug = suggested
 
 st.divider()
+st.markdown("### 🔎 Patobulinta paieška VVKT vaistų kataloge")
+
+vvkt_query = st.text_input(
+    "Įveskite vaisto pavadinimą",
+    placeholder="Pvz. Atacand"
+)
+
+if vvkt_query:
+    matches = [
+        name for name in vvkt_names
+        if vvkt_query.lower() in name.lower()
+    ][:20]
+
+    if matches:
+        st.selectbox("Rasti preparatai", matches)
+    else:
+        st.info("Pagal įvestą pavadinimą preparatų nerasta.")
+st.divider()
 st.markdown('<div class="step">✅ 3. Patvirtinkite arba pataisykite rezultatą</div>', unsafe_allow_html=True)
+
 default_index = classes.index(st.session_state.first_drug) if st.session_state.first_drug in classes else 0
 first = st.selectbox("Pirmasis vaistas", classes, index=default_index)
 st.session_state.first_drug = first
