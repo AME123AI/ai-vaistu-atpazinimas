@@ -375,6 +375,214 @@ def show_ingredient_explanation(
 
 
 # =========================================================
+# AUTOMATINIS FARMAKOLOGINĖS GRUPĖS NUSTATYMAS
+# =========================================================
+
+INGREDIENT_GROUP_RULES = {
+
+    "Nesteroidinis vaistas nuo uždegimo (NVNU)": [
+        "ibuprofen",
+        "naproksen",
+        "deksketoprofen",
+        "dexketoprofen",
+        "ketoprofen",
+        "diklofenak",
+        "diclofenac",
+        "celekoksib",
+        "celecoxib",
+        "meloksikam",
+        "meloxicam",
+        "indometacin",
+        "etoricoxib",
+        "etorikoksib",
+        "ketorolak",
+    ],
+
+    "Antikoaguliantas": [
+        "warfarin",
+        "varfarin",
+        "apiksaban",
+        "apixaban",
+        "rivaroksaban",
+        "rivaroxaban",
+        "dabigatran",
+        "edoksaban",
+        "edoxaban",
+        "heparin",
+        "enoksaparin",
+        "enoxaparin",
+    ],
+
+    "Antitrombocitinis vaistas": [
+        "klopidogrel",
+        "clopidogrel",
+        "tikagrelor",
+        "ticagrelor",
+        "prasugrel",
+        "acetilsalicilo rugst",
+        "acetylsalicylic acid",
+    ],
+
+    "SSRI antidepresantas": [
+        "sertralin",
+        "escitalopram",
+        "citalopram",
+        "fluoksetin",
+        "fluoxetine",
+        "paroksetin",
+        "paroxetine",
+        "fluvoksamin",
+        "fluvoxamine",
+    ],
+
+    "AKF inhibitorius": [
+        "ramipril",
+        "perindopril",
+        "enalapril",
+        "lisinopril",
+        "kaptopril",
+        "captopril",
+        "fosinopril",
+        "trandolapril",
+    ],
+
+    "Angiotenzino II receptorių blokatorius (ARB)": [
+        "kandesartan",
+        "candesartan",
+        "losartan",
+        "valsartan",
+        "telmisartan",
+        "irbesartan",
+        "olmesartan",
+    ],
+
+    "Kalį sulaikantis diuretikas": [
+        "spironolakton",
+        "spironolacton",
+        "eplerenon",
+        "eplerenone",
+        "amilorid",
+        "triamteren",
+    ],
+
+    "Diuretikas": [
+        "hidrochlorotiazid",
+        "hydrochlorothiazide",
+        "indapamid",
+        "furosemid",
+        "torasemid",
+        "chlortalidon",
+        "chlorthalidone",
+    ],
+
+    "Litis": [
+        "licio karbonat",
+        "lithium carbonate",
+        "lithium",
+    ],
+
+    "Metotreksatas": [
+        "metotreksat",
+        "methotrexate",
+    ],
+
+    "Širdies glikozidas": [
+        "digoksin",
+        "digoxin",
+    ],
+
+    "PDE5 inhibitorius": [
+        "sildenafil",
+        "tadalafil",
+        "vardenafil",
+        "avanafil",
+    ],
+
+    "Nitratas": [
+        "nitroglicerin",
+        "glicerilio trinitrat",
+        "glyceryl trinitrate",
+        "izosorbido mononitrat",
+        "isosorbide mononitrate",
+        "izosorbido dinitrat",
+        "isosorbide dinitrate",
+    ],
+
+    "Simvastatinas": [
+        "simvastatin",
+    ],
+
+    "Stiprus CYP3A4 inhibitorius": [
+        "klaritromicin",
+        "clarithromycin",
+        "eritromicin",
+        "erythromycin",
+        "itrakonazol",
+        "itraconazole",
+        "ketokonazol",
+        "ketoconazole",
+        "posakonazol",
+        "posaconazole",
+        "vorikonazol",
+        "voriconazole",
+        "ritonavir",
+    ],
+
+    "Tramadolis": [
+        "tramadol",
+    ],
+
+    "Augalinis atsikosėjimą lengvinantis preparatas": [
+        "raktažol",
+        "primula",
+        "ciobrel",
+        "thymus",
+        "eukalipt",
+        "mirt",
+        "eteriniu alieju",
+    ],
+}
+
+
+def get_ingredient_group(ingredient):
+
+    if not ingredient:
+        return None
+
+    # 1. Pirmiausia tikriname patikrintą ingredient_knowledge.csv
+    info = get_ingredient_knowledge(ingredient)
+
+    if info is not None:
+
+        group = clean_value(
+            info.get("group")
+        )
+
+        if group:
+            return group
+
+    # 2. Jei profilio nėra, bandome automatiškai nustatyti
+    # grupę pagal VVKT veikliosios medžiagos pavadinimą.
+
+    normalized_ingredient = normalize_text(
+        ingredient
+    )
+
+    for group, keywords in INGREDIENT_GROUP_RULES.items():
+
+        for keyword in keywords:
+
+            normalized_keyword = normalize_text(
+                keyword
+            )
+
+            if normalized_keyword in normalized_ingredient:
+                return group
+
+    return None
+
+
+# =========================================================
 # GRUPIŲ SĄVEIKOS
 # =========================================================
 
@@ -386,50 +594,58 @@ def find_group_interaction(
     if interaction_rules.empty:
         return None
 
-    info_1 = get_ingredient_knowledge(
+    group_1 = get_ingredient_group(
         ingredient_1
     )
 
-    info_2 = get_ingredient_knowledge(
+    group_2 = get_ingredient_group(
         ingredient_2
-    )
-
-    if info_1 is None or info_2 is None:
-        return None
-
-    group_1 = normalize_text(
-        info_1.get("group")
-    )
-
-    group_2 = normalize_text(
-        info_2.get("group")
     )
 
     if not group_1 or not group_2:
         return None
 
-    for _, rule in interaction_rules.iterrows():
+    group_1_norm = normalize_text(
+        group_1
+    )
 
-        rule_a = normalize_text(
-            rule.get("group_a")
+    group_2_norm = normalize_text(
+        group_2
+    )
+
+    for _, row in interaction_rules.iterrows():
+
+        rule_group_a = normalize_text(
+            row.get("group_a")
         )
 
-        rule_b = normalize_text(
-            rule.get("group_b")
+        rule_group_b = normalize_text(
+            row.get("group_b")
         )
 
-        direct = (
-            group_1 == rule_a
-            and group_2 == rule_b
+        # Taisyklė turi veikti abiem kryptimis:
+        # A + B ir B + A
+
+        direct_match = (
+            group_1_norm == rule_group_a
+            and
+            group_2_norm == rule_group_b
         )
 
-        reverse = (
-            group_1 == rule_b
-            and group_2 == rule_a
+        reverse_match = (
+            group_1_norm == rule_group_b
+            and
+            group_2_norm == rule_group_a
         )
 
-        if direct or reverse:
-            return rule
+        if direct_match or reverse_match:
+
+            result = row.to_dict()
+
+            result["detected_group_1"] = group_1
+            result["detected_group_2"] = group_2
+
+            return result
 
     return None
 
@@ -2155,7 +2371,43 @@ if st.button(
         )
 
         if group_rule is not None:
+else:
 
+    st.markdown(
+        "### ℹ️ Sąveikos vertinimas"
+    )
+
+    group_1 = get_ingredient_group(
+        ingredient_1
+    )
+
+    group_2 = get_ingredient_group(
+        ingredient_2
+    )
+
+    if group_1:
+        st.write(
+            f"**{first_drug}:** {group_1}"
+        )
+
+    if group_2:
+        st.write(
+            f"**{second_drug}:** {group_2}"
+        )
+
+    st.info(
+        "Šiai vaistų porai prototipo taisyklių bazėje "
+        "nėra patvirtintos porinės sąveikos taisyklės. "
+        "Tai nėra išvada, kad preparatus saugu vartoti kartu."
+    )
+
+    st.caption(
+        "Prototipas pateikia tik į jo patikrintą taisyklių "
+        "bazę įtrauktas farmakologines sąveikas. "
+        "Individualų vaistų derinį reikia vertinti pagal "
+        "oficialias preparatų charakteristikų santraukas "
+        "ir sveikatos priežiūros specialisto rekomendacijas."
+    )
             st.markdown(
                 "### ⚠️ Galima farmakologinė sąveika"
             )
