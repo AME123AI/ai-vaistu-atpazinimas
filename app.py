@@ -1921,7 +1921,7 @@ if uploaded:
         unsafe_allow_html=True
     )
 
-       with st.spinner(
+    with st.spinner(
         "Analizuojama pakuotė..."
     ):
 
