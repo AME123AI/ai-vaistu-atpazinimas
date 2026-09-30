@@ -1407,9 +1407,9 @@ uploaded = st.file_uploader(
 
 if uploaded:
 
-   image = ImageOps.exif_transpose(
-    Image.open(uploaded)
-).convert("RGB")
+    image = ImageOps.exif_transpose(
+        Image.open(uploaded)
+    ).convert("RGB")
 
     st.image(
         image,
