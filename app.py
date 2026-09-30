@@ -10,6 +10,13 @@ import pandas as pd
 import pytesseract
 import streamlit as st
 
+try:
+    from paddleocr import PaddleOCR
+    PADDLE_AVAILABLE = True
+except Exception:
+    PaddleOCR = None
+    PADDLE_AVAILABLE = False
+
 from PIL import Image, ImageOps, ImageEnhance
 from skimage.feature import hog
 
