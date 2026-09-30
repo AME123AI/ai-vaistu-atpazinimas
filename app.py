@@ -390,7 +390,7 @@ if uploaded:
             fuzzy_matches.extend(matches)
 
         ocr_suggestions = fuzzy_matches
-    # =====================================================
+       # =====================================================
     # PARODOME, KĄ OCR PAVYKO ATPAŽINTI
     # =====================================================
 
@@ -398,8 +398,8 @@ if uploaded:
 
     if "detected_ingredient" in locals() and detected_ingredient:
         detected_parts.append(
-        f"Veiklioji medžiaga: {detected_ingredient}"
-    )
+            f"Veiklioji medžiaga: {detected_ingredient}"
+        )
 
     if "detected_strength" in locals() and detected_strength:
         detected_parts.append(
@@ -421,12 +421,12 @@ if uploaded:
         for part in detected_parts:
             st.write("• " + part)
 
-    # Pašaliname pasikartojimus
+    # Pašaliname pasikartojančius kandidatus
     ocr_suggestions = list(
         dict.fromkeys(ocr_suggestions)
     )
 
-    # Rodome iki 20 kandidatų
+    # Rodome daugiausia 20 kandidatų
     ocr_suggestions = ocr_suggestions[:20]
 
     if ocr_suggestions:
@@ -437,13 +437,13 @@ if uploaded:
         if len(ocr_suggestions) == 1:
             st.success(
                 "Pagal OCR informaciją rastas "
-                    "1 atitinkantis VVKT preparatas."
+                "1 atitinkantis VVKT preparatas."
             )
         else:
             st.info(
                 f"Pagal OCR informaciją rasti "
                 f"{len(ocr_suggestions)} galimi VVKT preparatai. "
-                f"Pasirinkite preparatą pagal pakuotę."
+                "Pasirinkite preparatą pagal pakuotę."
             )
 
         ocr_selected = st.selectbox(
@@ -458,9 +458,11 @@ if uploaded:
 
         if not selected_rows.empty:
             row = selected_rows.iloc[0]
-                        st.markdown(
+
+            st.markdown(
                 "#### 💊 Patvirtinto preparato VVKT informacija"
             )
+
             st.write(
                 "**Pavadinimas:**",
                 row.get("preparato_pav", "—")
@@ -492,16 +494,15 @@ if uploaded:
             )
 
     else:
-
         st.info(
-            "OCR tekste nepavyko rasti pakankamai "
-            "panašaus VVKT preparato pavadinimo."
+            "Pagal OCR nuskaitytą informaciją "
+            "VVKT kataloge tinkamų preparatų nerasta."
         )
-
-
-    # -------------------------
+        # -------------------------
     # HOG + LOGISTIC REGRESSION
     # -------------------------
+
+    c1, c2 = st.columns(2)
 
     c1, c2 = st.columns(2)
 
