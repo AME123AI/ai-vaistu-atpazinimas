@@ -163,11 +163,27 @@ if uploaded:
             else "Teksto atpažinti nepavyko."
         )
 
-          # =====================================================
+    # =====================================================
     # OCR TEKSTO PALYGINIMAS SU VVKT DUOMENIMIS
     # =====================================================
 
     ocr_text_lower = ocr_text.lower()
+
+    # Normalizuojame OCR tekstą paprastesniam palyginimui
+    normalized_ocr = (
+        ocr_text_lower
+        .replace("ė", "e")
+        .replace("ę", "e")
+        .replace("ą", "a")
+        .replace("č", "c")
+        .replace("š", "s")
+        .replace("ų", "u")
+        .replace("ū", "u")
+        .replace("ž", "z")
+        .replace("į", "i")
+    )
+
+    ocr_suggestions = []
 
     # ---------------------------------
     # 1. TIKSLUS PREPARATO PAVADINIMAS
@@ -185,7 +201,8 @@ if uploaded:
         reverse=True
     )
 
-    ocr_suggestions = exact_matches.copy()
+    if exact_matches:
+        ocr_suggestions = exact_matches
 
     # ---------------------------------
     # 2. VEIKLIOJI MEDŽIAGA
@@ -193,17 +210,22 @@ if uploaded:
 
     if not ocr_suggestions:
 
-        ingredient_series = (
+        ingredient_names = sorted(
             vvkt["veiklioji_medz_lt"]
             .dropna()
             .astype(str)
             .str.strip()
-        )
-
-        ingredient_names = sorted(
-            ingredient_series
             .drop_duplicates()
             .tolist()
+        )
+
+        ingredient_lookup = {
+            x.lower(): x
+            for x in ingredient_names
+        }
+
+        ingredient_lower = list(
+            ingredient_lookup.keys()
         )
 
         ocr_lines = [
@@ -212,7 +234,7 @@ if uploaded:
             if len(line.strip()) >= 4
         ]
 
-        ingredient_matches = []
+        detected_ingredient = None
 
         for line in ocr_lines:
 
@@ -228,73 +250,144 @@ if uploaded:
 
                 matches = get_close_matches(
                     part.lower(),
-                    [x.lower() for x in ingredient_names],
-                    n=3,
+                    ingredient_lower,
+                    n=1,
                     cutoff=0.75
                 )
 
-                ingredient_matches.extend(matches)
+                if matches:
+                    detected_ingredient = (
+                        ingredient_lookup[matches[0]]
+                    )
+                    break
 
-        ingredient_matches = list(
-            dict.fromkeys(ingredient_matches)
-        )
+            if detected_ingredient:
+                break
 
-        # Pagal rastą veikliąją medžiagą
-        # surandame VVKT preparatus.
-        for ingredient_match in ingredient_matches:
+        # ---------------------------------
+        # 3. FILTRUOJAME PAGAL VVKT
+        # ---------------------------------
 
-            matching_rows = vvkt[
+        if detected_ingredient:
+
+            candidates = vvkt[
                 vvkt["veiklioji_medz_lt"]
                 .fillna("")
                 .astype(str)
                 .str.lower()
-                == ingredient_match
-            ]
+                == detected_ingredient.lower()
+            ].copy()
 
-            matching_names = (
-                matching_rows["preparato_pav"]
+            # ---------------------------------
+            # STIPRUMAS
+            # ---------------------------------
+
+            import re
+
+            strength_match = re.search(
+                r"\b(\d+(?:[.,]\d+)?)\s*mg\b",
+                ocr_text_lower
+            )
+
+            detected_strength = None
+
+            if strength_match:
+                detected_strength = (
+                    strength_match.group(1)
+                    .replace(",", ".")
+                    + " mg"
+                )
+
+            if detected_strength:
+
+                strength_candidates = candidates[
+                    candidates["stiprumas"]
+                    .fillna("")
+                    .astype(str)
+                    .str.lower()
+                    .str.contains(
+                        detected_strength.lower(),
+                        regex=False
+                    )
+                ]
+
+                if not strength_candidates.empty:
+                    candidates = strength_candidates
+
+            # ---------------------------------
+            # FARMACINĖ FORMA
+            # ---------------------------------
+
+            if (
+                "plevele dengtos tabletes"
+                in normalized_ocr
+            ):
+
+                form_candidates = candidates[
+                    candidates["farmacine_forma_lt"]
+                    .fillna("")
+                    .astype(str)
+                    .str.lower()
+                    .str.contains(
+                        "plėvele dengtos tabletės",
+                        regex=False
+                    )
+                ]
+
+                if not form_candidates.empty:
+                    candidates = form_candidates
+
+            elif "tabletes" in normalized_ocr:
+
+                form_candidates = candidates[
+                    candidates["farmacine_forma_lt"]
+                    .fillna("")
+                    .astype(str)
+                    .str.lower()
+                    .str.contains(
+                        "tablet",
+                        regex=False
+                    )
+                ]
+
+                if not form_candidates.empty:
+                    candidates = form_candidates
+
+            # ---------------------------------
+            # GALUTINIAI PASIŪLYMAI
+            # ---------------------------------
+
+            ocr_suggestions = (
+                candidates["preparato_pav"]
                 .dropna()
                 .astype(str)
                 .drop_duplicates()
                 .tolist()
             )
 
-            ocr_suggestions.extend(matching_names)
-
     # ---------------------------------
-    # 3. FUZZY PREPARATO PAVADINIMAS
+    # 4. ATSARGINĖ PAVADINIMO PAIEŠKA
     # ---------------------------------
 
     if not ocr_suggestions:
 
-        ocr_lines = [
-            line.strip()
-            for line in ocr_text.splitlines()
-            if len(line.strip()) >= 4
-        ]
-
         fuzzy_matches = []
 
-        for line in ocr_lines:
+        for line in ocr_text.splitlines():
 
-            search_parts = [line]
+            line = line.strip()
 
-            search_parts.extend(
-                word
-                for word in line.split()
-                if len(word) >= 5
+            if len(line) < 5:
+                continue
+
+            matches = get_close_matches(
+                line,
+                vvkt_names,
+                n=5,
+                cutoff=0.80
             )
 
-            for part in search_parts:
-
-                matches = get_close_matches(
-                    part,
-                    vvkt_names,
-                    n=5,
-                    cutoff=0.78
-                )
-
-                fuzzy_matches.extend(matches)
+            fuzzy_matches.extend(matches)
 
         ocr_suggestions = fuzzy_matches
 
@@ -303,7 +396,7 @@ if uploaded:
         dict.fromkeys(ocr_suggestions)
     )
 
-    # Rodome daugiausia 20 rezultatų
+    # Rodome iki 20 kandidatų
     ocr_suggestions = ocr_suggestions[:20]
 
 
