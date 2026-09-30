@@ -2068,7 +2068,10 @@ if uploaded:
         "Analizuojama pakuotė..."
     ):
 
-        # 1 etapas – greitas OCR
+        # =============================================
+        # 1 ETAPAS – GREITAS TESSERACT
+        # =============================================
+
         fast_ocr_text = run_fast_ocr(
             image
         )
@@ -2078,23 +2081,73 @@ if uploaded:
             top_n=5
         )
 
-        if fast_candidates:
-            ocr_text = fast_ocr_text
-            ranked_candidates = fast_candidates
+        # Tesseract rezultatą laikome pakankamai stipriu
+        # tik tada, kai pats preparato pavadinimas turi
+        # aiškų OCR atitikimą.
+        fast_is_strong = False
 
-        else:
-            # 2 etapas – papildomas OCR
-            fallback_text = run_fallback_ocr(
-                image,
-                fast_text=fast_ocr_text
+        if fast_candidates:
+
+            top_fast = fast_candidates[0]
+
+            fast_is_strong = (
+                top_fast["name_score"] >= 0.90
+                and top_fast["score"] >= 0.75
             )
 
-            ocr_text = fallback_text
+        # =============================================
+        # JEI TESSERACT PAKANKAMAI STIPRUS – STOP
+        # =============================================
+
+        if fast_is_strong:
+
+            ocr_text = fast_ocr_text
+            ranked_candidates = fast_candidates
+            ocr_engine = "Tesseract"
+
+        else:
+
+            # =========================================
+            # 2 ETAPAS – PADDLEOCR
+            # =========================================
+
+            paddle_text = run_paddle_ocr(
+                image
+            )
+
+            # Abu OCR tekstai papildo vienas kitą.
+            # Pvz. Tesseract gali geriau perskaityti
+            # stiprumą, o PaddleOCR – prekės ženklą.
+            combined_parts = []
+
+            if fast_ocr_text:
+                combined_parts.append(
+                    fast_ocr_text
+                )
+
+            if paddle_text:
+                combined_parts.append(
+                    paddle_text
+                )
+
+            ocr_text = "\n".join(
+                dict.fromkeys(
+                    combined_parts
+                )
+            )
 
             ranked_candidates = rank_vvkt_candidates(
                 ocr_text,
                 top_n=5
             )
+
+            if paddle_text:
+                ocr_engine = "Tesseract + PaddleOCR"
+
+            else:
+                # PaddleOCR nepavykus programa vis tiek
+                # išlieka veikianti su Tesseract.
+                ocr_engine = "Tesseract"
 
     strengths = extract_strengths(
         ocr_text
@@ -2108,6 +2161,9 @@ if uploaded:
         ocr_text
     )
     with st.expander("🔍 OCR perskaitytas tekstas"):
+        st.caption(
+            f"Naudotas OCR: {ocr_engine}"
+        )
         st.text(
             ocr_text
             if ocr_text
