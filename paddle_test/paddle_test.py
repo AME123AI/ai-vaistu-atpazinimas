@@ -238,6 +238,89 @@ def detect_form(text):
 # OCR fragmentai
 # ---------------------------------------------------------
 
+# ---------------------------------------------------------
+# OCR fragmentai
+# ---------------------------------------------------------
+
+GENERIC_OCR_WORDS = {
+    # Farmacinės formos / pakuotės
+    "tablete",
+    "tabletes",
+    "tableciu",
+    "tablet",
+    "kapsule",
+    "kapsules",
+    "kapsuliu",
+    "kapsul",
+    "sirupas",
+    "sirup",
+    "tirpalas",
+    "tirpal",
+    "kremas",
+    "krem",
+    "tepalas",
+    "tepal",
+    "gelis",
+    "gel",
+    "purskalas",
+    "purskal",
+    "milteliai",
+    "miltel",
+    "zvakutes",
+    "zvakut",
+
+    # Dažni farmaciniai / cheminiai žodžiai
+    "hydrochloridum",
+    "hydrochloride",
+    "hidrochloridas",
+    "hidrochlorido",
+    "chloridum",
+    "chloride",
+    "chloridas",
+    "chlorido",
+    "natrii",
+    "sodium",
+    "kalio",
+    "potassium",
+
+    # Bendriniai užrašai
+    "mg",
+    "ml",
+    "geriamasis",
+    "geriamoji",
+    "dengtos",
+    "dengta",
+    "plėvele",
+    "plevele",
+}
+
+
+def is_useful_name_fragment(fragment):
+    fragment = normalize_text(fragment)
+
+    if not fragment:
+        return False
+
+    # Vien skaičiai nėra prekės ženklo signalas.
+    if fragment.replace(" ", "").isdigit():
+        return False
+
+    words = fragment.split()
+
+    useful_words = []
+
+    for word in words:
+        if len(word) < 4:
+            continue
+
+        if word in GENERIC_OCR_WORDS:
+            continue
+
+        useful_words.append(word)
+
+    return len(useful_words) > 0
+
+
 def build_fragments(lines):
     fragments = []
 
@@ -247,15 +330,19 @@ def build_fragments(lines):
         if not line_norm:
             continue
 
-        fragments.append(line_norm)
+        # Visa OCR eilutė gali būti naudinga,
+        # tačiau tik jei joje yra bent vienas
+        # informatyvus žodis.
+        if is_useful_name_fragment(line_norm):
+            fragments.append(line_norm)
 
-        words = line_norm.split()
-
-        for word in words:
-            if len(word) >= 4:
+        for word in line_norm.split():
+            if (
+                len(word) >= 4
+                and word not in GENERIC_OCR_WORDS
+            ):
                 fragments.append(word)
 
-    # Išsaugome tvarką ir pašaliname pasikartojimus
     return list(dict.fromkeys(fragments))
 
 
@@ -348,9 +435,8 @@ def find_vvkt_candidates(
 
         # Per silpnų pavadinimų net nevertiname toliau.
         # Tai apsaugo nuo atsitiktinių VVKT kandidatų.
-        if name_score < 0.60:
-            continue
-
+       if name_score < 0.68:
+    continue
         strength_score = 0.0
 
         if strengths:
