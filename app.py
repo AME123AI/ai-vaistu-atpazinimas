@@ -2375,7 +2375,9 @@ if uploaded:
                 "first_vvkt_drug"
             ] = candidate["name"]
 
-            st.rerun()
+            st.success(
+                f"✅ Patvirtinta: {candidate['name']}"
+            )
 
     else:
 
