@@ -612,16 +612,20 @@ def run_fast_ocr(image):
 @st.cache_resource
 def load_paddle_ocr():
     """
-    PaddleOCR modelį įkeliame tik vieną kartą.
+    Lengvesnis PaddleOCR variantas Streamlit Cloud aplinkai.
+    Modelis įkeliamas tik tada, kai Tesseract rezultato nepakanka.
     """
     if not PADDLE_AVAILABLE:
         return None
 
     try:
         return PaddleOCR(
+            text_detection_model_name="PP-OCRv5_mobile_det",
+            text_recognition_model_name="PP-OCRv5_mobile_rec",
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
-            use_textline_orientation=False
+            use_textline_orientation=False,
+            device="cpu"
         )
     except Exception:
         return None
