@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import re
 import unicodedata
+import hashlib
 from difflib import get_close_matches, SequenceMatcher
 
 import joblib
@@ -2163,94 +2164,139 @@ if uploaded:
         unsafe_allow_html=True
     )
 
-    with st.spinner(
-        "Analizuojama pakuotė..."
-    ):
+    # =====================================================
+    # OCR REZULTATO IŠSAUGOJIMAS PAGAL NUOTRAUKĄ
+    # =====================================================
 
-        # =============================================
-        # 1 ETAPAS – GREITAS TESSERACT
-        # =============================================
+    uploaded_bytes = uploaded.getvalue()
 
-        fast_ocr_text = run_fast_ocr(
-            image
-        )
+    image_key = hashlib.sha256(
+        uploaded_bytes
+    ).hexdigest()
 
-        fast_candidates = rank_vvkt_candidates(
-            fast_ocr_text,
-            top_n=5
-        )
+    cached_key = st.session_state.get(
+        "ocr_image_key"
+    )
 
-        # Tesseract rezultatą laikome pakankamai stipriu
-        # tik tada, kai pats preparato pavadinimas turi
-        # aiškų OCR atitikimą.
-        fast_is_strong = False
+    # OCR atliekame tik tada, kai įkelta nauja nuotrauka.
+    if cached_key != image_key:
 
-        if fast_candidates:
+        with st.spinner(
+            "Analizuojama pakuotė..."
+        ):
 
-            top_fast = fast_candidates[0]
+            # =============================================
+            # 1 ETAPAS – GREITAS TESSERACT
+            # =============================================
 
-            fast_is_strong = (
-                top_fast["name_score"] >= 0.90
-                and top_fast["score"] >= 0.75
-            )
-
-        # =============================================
-        # JEI TESSERACT PAKANKAMAI STIPRUS – STOP
-        # =============================================
-
-        if fast_is_strong:
-
-            ocr_text = fast_ocr_text
-            ranked_candidates = fast_candidates
-            ocr_engine = "Tesseract"
-
-        else:
-
-            # =========================================
-            # 2 ETAPAS – PADDLEOCR
-            # =========================================
-
-            paddle_text = run_paddle_ocr(
+            fast_ocr_text = run_fast_ocr(
                 image
             )
 
-            # Abu OCR tekstai papildo vienas kitą.
-            # Pvz. Tesseract gali geriau perskaityti
-            # stiprumą, o PaddleOCR – prekės ženklą.
-            combined_parts = []
-
-            if fast_ocr_text:
-                combined_parts.append(
-                    fast_ocr_text
-                )
-
-            if paddle_text:
-                combined_parts.append(
-                    paddle_text
-                )
-
-            ocr_text = "\n".join(
-                dict.fromkeys(
-                    combined_parts
-                )
-            )
-
-            ranked_candidates = rank_vvkt_candidates(
-                ocr_text,
+            fast_candidates = rank_vvkt_candidates(
+                fast_ocr_text,
                 top_n=5
             )
 
-            if paddle_text:
-                ocr_engine = "Tesseract + PaddleOCR"
+            fast_is_strong = False
 
-            else:
-                # PaddleOCR nepavykus programa vis tiek
-                # išlieka veikianti su Tesseract.
+            if fast_candidates:
+
+                top_fast = fast_candidates[0]
+
+                fast_is_strong = (
+                    top_fast["name_score"] >= 0.90
+                    and top_fast["score"] >= 0.75
+                )
+
+            # =============================================
+            # JEI TESSERACT PAKANKAMAI STIPRUS – STOP
+            # =============================================
+
+            if fast_is_strong:
+
+                ocr_text = fast_ocr_text
+                ranked_candidates = fast_candidates
                 ocr_engine = "Tesseract"
 
-    strengths = extract_strengths(
-        ocr_text
-    )
+            else:
+
+                # =========================================
+                # 2 ETAPAS – PADDLEOCR
+                # =========================================
+
+                paddle_text = run_paddle_ocr(
+                    image
+                )
+
+                combined_parts = []
+
+                if fast_ocr_text:
+                    combined_parts.append(
+                        fast_ocr_text
+                    )
+
+                if paddle_text:
+                    combined_parts.append(
+                        paddle_text
+                    )
+
+                ocr_text = "\n".join(
+                    dict.fromkeys(
+                        combined_parts
+                    )
+                )
+
+                ranked_candidates = rank_vvkt_candidates(
+                    ocr_text,
+                    top_n=5
+                )
+
+                if paddle_text:
+                    ocr_engine = "Tesseract + PaddleOCR"
+                else:
+                    ocr_engine = "Tesseract"
+
+        # =============================================
+        # IŠSAUGOME ŠIOS NUOTRAUKOS REZULTATĄ
+        # =============================================
+
+        st.session_state[
+            "ocr_image_key"
+        ] = image_key
+
+        st.session_state[
+            "ocr_text_cached"
+        ] = ocr_text
+
+        st.session_state[
+            "ocr_candidates_cached"
+        ] = ranked_candidates
+
+        st.session_state[
+            "ocr_engine_cached"
+        ] = ocr_engine
+
+    else:
+
+        # =============================================
+        # TA PATI NUOTRAUKA – OCR NEKARTOJAME
+        # =============================================
+
+        ocr_text = st.session_state.get(
+            "ocr_text_cached",
+            ""
+        )
+
+        ranked_candidates = st.session_state.get(
+            "ocr_candidates_cached",
+            []
+        )
+
+        ocr_engine = st.session_state.get(
+            "ocr_engine_cached",
+            "Tesseract"
+        )
 
     detected_form = detect_form(
         ocr_text
