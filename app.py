@@ -2298,6 +2298,10 @@ if uploaded:
             "Tesseract"
         )
 
+    strengths = extract_strengths(
+        ocr_text
+    )
+
     detected_form = detect_form(
         ocr_text
     )
