@@ -2572,33 +2572,361 @@ st.divider()
 
 st.markdown(
     '<div class="step">'
-    '💊 4. Pasirinkite antrą vaistą'
+    '💊 4. Įkelkite antro vaisto pakuotės nuotrauką'
     '</div>',
     unsafe_allow_html=True
 )
 
-second_query = st.text_input(
-    "Ieškoti antro preparato",
-    placeholder="Pvz. Dolmen, NO-SPA..."
+second_uploaded = st.file_uploader(
+    "Antro vaisto pakuotės nuotrauka",
+    type=["jpg", "jpeg", "png"],
+    key="second_drug_image"
 )
 
-second = None
+if second_uploaded:
+
+    second_image = ImageOps.exif_transpose(
+        Image.open(second_uploaded)
+    ).convert("RGB")
+
+    st.image(
+        second_image,
+        caption="Įkelta antro vaisto pakuotė",
+        width=430
+    )
+
+    second_bytes = second_uploaded.getvalue()
+
+    second_image_key = hashlib.sha256(
+        second_bytes
+    ).hexdigest()
+
+    second_cached_key = st.session_state.get(
+        "second_ocr_image_key"
+    )
+
+    # OCR vykdome tik naujai antro vaisto nuotraukai.
+    if second_cached_key != second_image_key:
+
+        with st.spinner(
+            "Analizuojama antro vaisto pakuotė..."
+        ):
+
+            # 1 etapas – greitas Tesseract
+            second_fast_text = run_fast_ocr(
+                second_image
+            )
+
+            second_fast_candidates = rank_vvkt_candidates(
+                second_fast_text,
+                top_n=5
+            )
+
+            second_fast_is_strong = False
+
+            if second_fast_candidates:
+
+                second_top_fast = second_fast_candidates[0]
+
+                second_fast_is_strong = (
+                    second_top_fast["name_score"] >= 0.90
+                    and second_top_fast["score"] >= 0.75
+                )
+
+            if second_fast_is_strong:
+
+                second_ocr_text = second_fast_text
+
+                second_ranked_candidates = (
+                    second_fast_candidates
+                )
+
+                second_ocr_engine = "Tesseract"
+
+            else:
+
+                # 2 etapas – PaddleOCR
+                second_paddle_text = run_paddle_ocr(
+                    second_image
+                )
+
+                second_combined_parts = []
+
+                if second_fast_text:
+                    second_combined_parts.append(
+                        second_fast_text
+                    )
+
+                if second_paddle_text:
+                    second_combined_parts.append(
+                        second_paddle_text
+                    )
+
+                second_ocr_text = "\n".join(
+                    dict.fromkeys(
+                        second_combined_parts
+                    )
+                )
+
+                second_ranked_candidates = (
+                    rank_vvkt_candidates(
+                        second_ocr_text,
+                        top_n=5
+                    )
+                )
+
+                if second_paddle_text:
+                    second_ocr_engine = (
+                        "Tesseract + PaddleOCR"
+                    )
+                else:
+                    second_ocr_engine = "Tesseract"
+
+        # Išsaugome tik antro vaisto OCR rezultatą.
+        st.session_state[
+            "second_ocr_image_key"
+        ] = second_image_key
+
+        st.session_state[
+            "second_ocr_text_cached"
+        ] = second_ocr_text
+
+        st.session_state[
+            "second_ocr_candidates_cached"
+        ] = second_ranked_candidates
+
+        st.session_state[
+            "second_ocr_engine_cached"
+        ] = second_ocr_engine
+
+        # Nauja antro vaisto nuotrauka panaikina ankstesnį
+        # patvirtintą antrą preparatą.
+        st.session_state[
+            "second_vvkt_drug"
+        ] = None
+
+    else:
+
+        # Ta pati nuotrauka – OCR nekartojame.
+        second_ocr_text = st.session_state.get(
+            "second_ocr_text_cached",
+            ""
+        )
+
+        second_ranked_candidates = st.session_state.get(
+            "second_ocr_candidates_cached",
+            []
+        )
+
+        second_ocr_engine = st.session_state.get(
+            "second_ocr_engine_cached",
+            "Tesseract"
+        )
+
+    second_strengths = extract_strengths(
+        second_ocr_text
+    )
+
+    second_detected_form = detect_form(
+        second_ocr_text
+    )
+
+    second_detected_ingredient = detect_ingredient(
+        second_ocr_text
+    )
+
+    with st.expander(
+        "🔍 Antro vaisto OCR perskaitytas tekstas"
+    ):
+
+        st.caption(
+            f"Naudotas OCR: {second_ocr_engine}"
+        )
+
+        st.text(
+            second_ocr_text
+            if second_ocr_text
+            else "OCR teksto neaptiko."
+        )
+
+    st.markdown(
+        "#### 🧾 Iš antros pakuotės aptikta informacija"
+    )
+
+    st.write(
+        "**Veiklioji medžiaga:**",
+        second_detected_ingredient
+        or "automatiškai nenustatyta"
+    )
+
+    st.write(
+        "**Stiprumas:**",
+        ", ".join(second_strengths[:3])
+        if second_strengths
+        else "automatiškai nenustatytas"
+    )
+
+    st.write(
+        "**Farmacinė forma:**",
+        second_detected_form
+        or "automatiškai nenustatyta"
+    )
+
+    st.markdown(
+        "#### 🔎 Galimi VVKT preparatai"
+    )
+
+    if second_ranked_candidates:
+
+        second_labels = {}
+
+        for index, candidate in enumerate(
+            second_ranked_candidates,
+            start=1
+        ):
+
+            label = (
+                f"{index}. "
+                f"{candidate['name']} | "
+                f"{candidate['strength']} | "
+                f"{candidate['score'] * 100:.0f}% atitikimas"
+            )
+
+            second_labels[label] = candidate
+
+        second_selected_label = st.selectbox(
+            "Pasirinkite antrą preparatą",
+            list(second_labels.keys()),
+            key="second_ocr_candidate"
+        )
+
+        second_candidate = second_labels[
+            second_selected_label
+        ]
+
+        st.success(
+            f"💊 Galimas antras preparatas: "
+            f"**{second_candidate['name']}**"
+        )
+
+        second_c1, second_c2, second_c3 = st.columns(3)
+
+        second_c1.metric(
+            "Bendras atitikimas",
+            f"{second_candidate['score'] * 100:.0f}%"
+        )
+
+        second_c2.metric(
+            "Pavadinimas",
+            f"{second_candidate['name_score'] * 100:.0f}%"
+        )
+
+        second_c3.metric(
+            "Veiklioji medžiaga",
+            f"{second_candidate['ingredient_score'] * 100:.0f}%"
+        )
+
+        st.write(
+            "**Veiklioji medžiaga:**",
+            second_candidate["ingredient"]
+        )
+
+        st.write(
+            "**Stiprumas:**",
+            second_candidate["strength"]
+        )
+
+        st.write(
+            "**Farmacinė forma:**",
+            second_candidate["form"]
+        )
+
+        st.caption(
+            "Atitikimo procentas yra paieškos algoritmo "
+            "balas, o ne statistinė AI tikimybė."
+        )
+
+        if st.button(
+            "✅ Patvirtinti antrą preparatą",
+            type="primary"
+        ):
+
+            st.session_state[
+                "second_vvkt_drug"
+            ] = second_candidate["name"]
+
+            st.success(
+                f"✅ Patvirtinta: "
+                f"{second_candidate['name']}"
+            )
+
+    else:
+
+        st.warning(
+            "Patikimo antro preparato VVKT kandidato "
+            "automatiškai parinkti nepavyko."
+        )
+
+
+# =========================================================
+# RANKINĖ ANTRO PREPARATO PAIEŠKA
+# =========================================================
+
+st.markdown(
+    "#### 🔎 Arba ieškokite antro preparato rankiniu būdu"
+)
+
+second_query = st.text_input(
+    "Ieškoti antro preparato",
+    placeholder="Pvz. Dolmen, NO-SPA...",
+    key="manual_second_query"
+)
 
 if second_query:
 
-    matches = find_names(
+    second_matches = find_names(
         second_query
     )
 
-    if matches:
+    if second_matches:
 
-        second = st.selectbox(
-            "Pasirinkite antrą preparatą",
-            matches,
-            key="second_drug"
+        manual_second = st.selectbox(
+            "Rasti antro preparato variantai",
+            second_matches,
+            key="manual_second"
         )
 
-        show_vvkt_info(second)
+        show_vvkt_info(
+            manual_second
+        )
+
+        if st.button(
+            "✅ Naudoti šį antrą preparatą"
+        ):
+
+            st.session_state[
+                "second_vvkt_drug"
+            ] = manual_second
+
+            st.success(
+                f"✅ Patvirtinta: {manual_second}"
+            )
+
+
+# Patvirtintas antras preparatas.
+second = st.session_state.get(
+    "second_vvkt_drug"
+)
+
+if second:
+
+    st.success(
+        f"💊 Patvirtintas antras preparatas: {second}"
+    )
+
+    show_vvkt_info(
+        second
+    )
 
 
 # =========================================================
