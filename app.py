@@ -634,9 +634,16 @@ def load_paddle_ocr():
 
 def run_paddle_ocr(image):
     """
-    Antras OCR etapas sudėtingesnėms telefono nuotraukoms.
-    PaddleOCR kviečiamas tik tada, kai jo iš tikrųjų reikia.
+    PaddleOCR etapas sudėtingesnėms telefono nuotraukoms.
+
+    Naudojami keli tikslingi vaizdo variantai:
+    1. originaliai paruošta nuotrauka;
+    2. padidinto kontrasto nuotrauka;
+    3. 90 laipsnių pasukta nuotrauka.
+
+    Paddle modelis įkeliamas tik vieną kartą.
     """
+
     ocr = load_paddle_ocr()
 
     if ocr is None:
@@ -644,26 +651,82 @@ def run_paddle_ocr(image):
 
     base = prepare_fast_ocr_image(image)
 
-    try:
-        results = ocr.predict(
-            np.asarray(base)
-        )
-    except Exception:
-        return ""
+    # -------------------------------------------------
+    # 1. ORIGINALUS VAIZDAS
+    # -------------------------------------------------
+
+    variants = [
+        base
+    ]
+
+    # -------------------------------------------------
+    # 2. KONTRASTINGESNIS VAIZDAS
+    # -------------------------------------------------
+
+    gray = ImageOps.grayscale(
+        base
+    )
+
+    gray = ImageOps.autocontrast(
+        gray
+    )
+
+    contrast = ImageEnhance.Contrast(
+        gray
+    ).enhance(1.6)
+
+    # PaddleOCR gauna RGB vaizdą.
+    contrast = contrast.convert("RGB")
+
+    variants.append(
+        contrast
+    )
+
+    # -------------------------------------------------
+    # 3. PASUKTAS VAIZDAS
+    # -------------------------------------------------
+
+    rotated = base.rotate(
+        90,
+        expand=True
+    )
+
+    variants.append(
+        rotated
+    )
+
+    # -------------------------------------------------
+    # OCR
+    # -------------------------------------------------
 
     texts = []
 
-    for item in results:
+    for variant in variants:
+
         try:
-            data = item.json
 
-            if callable(data):
-                data = data()
+            results = ocr.predict(
+                np.asarray(variant)
+            )
 
-            if isinstance(data, str):
-                data = json.loads(data)
+        except Exception:
+            continue
 
-            if isinstance(data, dict):
+        for item in results:
+
+            try:
+
+                data = item.json
+
+                if callable(data):
+                    data = data()
+
+                if isinstance(data, str):
+                    data = json.loads(data)
+
+                if not isinstance(data, dict):
+                    continue
+
                 result_data = data.get(
                     "res",
                     data
@@ -675,16 +738,24 @@ def run_paddle_ocr(image):
                 )
 
                 for text in rec_texts:
-                    text = str(text).strip()
 
-                    if text:
-                        texts.append(text)
+                    text = str(
+                        text
+                    ).strip()
 
-        except Exception:
-            continue
+                    if (
+                        text
+                        and text not in texts
+                    ):
+                        texts.append(
+                            text
+                        )
+
+            except Exception:
+                continue
 
     return "\n".join(
-        dict.fromkeys(texts)
+        texts
     )
 def run_fallback_ocr(image, fast_text=""):
     """
