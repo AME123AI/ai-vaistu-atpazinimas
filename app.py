@@ -3059,7 +3059,7 @@ if first and second:
         st.info(note)
     if not demo_warnings and not demo_notes:
         st.info("Pagal turimus duomenis demonstracinės perspėjimo sąlygos nenustatytos.")
-    st.caption("500 mg ir 700 mg yra tik programinės demonstracinės ribos, o ne mediciniškai pagrįsti kriterijai. Skirtingų medžiagų mg suma neįrodo rizikos ar saugumo. Perspėjimo nebuvimas nereiškia, kad vaistus saugu vartoti kartu.")
+    st.caption("Tikrinamas galimas veikliųjų medžiagų dubliavimas. Skirtingų medžiagų mg sumos nėra medicininis rizikos kriterijus. Perspėjimo nebuvimas nereiškia, kad vaistus saugu vartoti kartu.")
     current_signature = (first, second, int(first_qty), int(second_qty), tuple(demo_warnings))
     if st.session_state.get("demo_ack_signature") != current_signature and demo_warnings:
         @st.dialog("⚠️ Dėmesio! Galima vaistų vartojimo rizika!")

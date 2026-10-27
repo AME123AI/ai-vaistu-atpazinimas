@@ -1,6 +1,7 @@
 """Edukacinės demonstracinės taisyklės; NENAUDOTI medicininiams sprendimams."""
 import re
 from collections import defaultdict
+import unicodedata
 
 LIMIT_DUPLICATE_MG = 500
 LIMIT_DIFFERENT_MG = 700
@@ -19,6 +20,28 @@ def _strengths(text):
         values.append(float(m.group(1).replace(',', '.')))
     return values
 
+def _ingredient_key(value):
+    """Tik aiškiai apibrėžtas sinonimų grupes laikome susijusiomis.
+
+    Druskos forma ir bazinė medžiaga nėra automatiškai lygiaverčiai mg.
+    """
+    key = unicodedata.normalize('NFKD', str(value or '').casefold())
+    key = ''.join(ch for ch in key if not unicodedata.combining(ch))
+    key = re.sub(r'\s+', ' ', key).strip()
+    if key in {'ambroksolis', 'ambroksolio hidrochloridas',
+               'ambroxol', 'ambroxol hydrochloride', 'ambroxoli hydrochloridum'}:
+        return 'ambroksolis'
+    return key
+
+
+def _is_ambroxol_salt(value):
+    key = _ingredient_key(value)
+    return key == 'ambroksolis' and any(
+        term in unicodedata.normalize('NFKD', str(value).casefold())
+        for term in ('hidrochlorid', 'hydrochlorid')
+    )
+
+
 def analyze(items):
     """Grąžina (perspėjimai, pastabos, išskaidytos sudedamosios dalys)."""
     warnings, notes, components = [], [], []
@@ -33,6 +56,8 @@ def analyze(items):
         if not ingredients or not form or not isinstance(qty, int) or qty < 1:
             incomplete = True
             notes.append(f'{name}: nepakanka patvirtintų duomenų skaičiavimui')
+            for ing in ingredients:
+                components.append({'name':name,'ingredient':ing,'mg':None,'excluded':excluded})
             continue
         if amounts is None or len(amounts) != len(ingredients):
             incomplete = True
@@ -46,22 +71,16 @@ def analyze(items):
             notes.append(f'{name}: šiai farmacinei formai mg demonstracinės ribos netaikomos')
     grouped = defaultdict(list)
     for c in components:
-        grouped[c['ingredient'].casefold()].append(c)
+        grouped[_ingredient_key(c['ingredient'])].append(c)
     for group in grouped.values():
         if len({c['name'] for c in group}) > 1:
             warnings.append(f'Galimas veikliosios medžiagos „{group[0]["ingredient"]}“ dubliavimas')
-            if all(c['mg'] is not None for c in group):
+            # Skirtingų druskos / bazinės medžiagos formų mg nesumuojame.
+            if len({_is_ambroxol_salt(c['ingredient']) for c in group}) > 1:
+                notes.append('Ambroksolio formų mg kiekiai automatiškai nesulyginami; būtina patikrinti VVKT dokumentus')
+            elif all(c['mg'] is not None for c in group):
                 total = sum(c['mg'] for c in group)
-                if total > LIMIT_DUPLICATE_MG:
-                    warnings.append(f'Demonstracinė 500 mg riba viršyta: {group[0]["ingredient"]} – {total:g} mg')
-    # Skirtingų veikliųjų medžiagų suma yra tik programinis demonstravimas,
-    # mediciniškai skirtingų medžiagų mg sudėti negalima saugumui vertinti.
-    if len(grouped) > 1 and not incomplete:
-        included = [c for c in components if not c['excluded']]
-        if included and all(c['mg'] is not None for c in included):
-            total = sum(c['mg'] for c in included)
-            if total > LIMIT_DIFFERENT_MG:
-                warnings.append(f'Demonstracinė 700 mg suma viršyta: {total:g} mg (ne medicininė riba)')
+                # Be medžiagai specifinių patvirtintų ribų mg sumos nevertiname kaip rizikos.
     return warnings, notes, components
 
 def evaluate(items):
