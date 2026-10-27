@@ -1,3 +1,4 @@
+from demo_risk_rules import evaluate as evaluate_demo_risk
 from pathlib import Path
 import json
 import re
@@ -2998,6 +2999,44 @@ if second:
     show_vvkt_info(
         second
     )
+
+
+# Demonstracinis perspėjimas automatiškai perskaičiuojamas keičiant pasirinkimą.
+# Vienareikšmiškumo reikalavimas: skirtingų VVKT eilučių reikšmės nespėjamos.
+def _demo_info(name, quantity):
+    rows = get_vvkt_rows(name)
+    if rows.empty:
+        return {"name": name, "ingredient": None, "strength": None, "form": None, "quantity": quantity}
+    result = {"name": name, "quantity": quantity}
+    for target, column in (("ingredient", "veiklioji_medz_lt"), ("strength", "stiprumas"), ("form", "farmacine_forma_lt")):
+        values = {str(v).strip() for v in rows[column].dropna() if str(v).strip()}
+        result[target] = next(iter(values)) if len(values) == 1 else None
+    return result
+
+if first and second:
+    st.markdown("### ⚠️ Demonstracinė rizikos patikra")
+    q1, q2 = st.columns(2)
+    with q1:
+        first_qty = st.number_input("Pirmojo preparato vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_first")
+    with q2:
+        second_qty = st.number_input("Antrojo preparato vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_second")
+    demo_items = [_demo_info(first, int(first_qty)), _demo_info(second, int(second_qty))]
+    demo_warnings, demo_notes = evaluate_demo_risk(demo_items)
+    for warning in demo_warnings:
+        st.warning(warning)
+    for note in demo_notes:
+        st.info(note)
+    st.caption("Tik universiteto demonstracinės taisyklės. 500 mg ir 700 mg nėra medicininės saugumo ribos. Perspėjimo nebuvimas nereiškia, kad vaistų derinys saugus.")
+    current_signature = (first, second, int(first_qty), int(second_qty), tuple(demo_warnings))
+    if st.session_state.get("demo_ack_signature") != current_signature and demo_warnings:
+        @st.dialog("⚠️ Dėmesio! Galima vaistų vartojimo rizika!")
+        def _demo_popup():
+            st.warning("Pasirinktas vaistų derinys atitinka vieną ar kelis demonstracinius perspėjimo kriterijus. Kartu vartojant šiuos vaistus gali kilti nepageidaujamų reakcijų arba dozės dubliavimo rizika. Prieš vartodami šiuos vaistus kartu, pasitarkite su gydytoju arba vaistininku.")
+            st.caption("Tai nėra medicininė sąveikų patikra ar saugumo patvirtinimas.")
+            if st.button("Gerai", key="demo_ack_button"):
+                st.session_state["demo_ack_signature"] = current_signature
+                st.rerun()
+        _demo_popup()
 
 
 # =========================================================
