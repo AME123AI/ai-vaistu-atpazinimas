@@ -1,3 +1,4 @@
+from demo_risk_rules import analyze as analyze_demo_risk
 from pathlib import Path
 import json
 import re
@@ -242,9 +243,9 @@ def get_vvkt_ingredient(name):
     return value if value else None
 
 
-def show_vvkt_info(name):
+def show_vvkt_info(name, selected_row=None):
 
-    row = get_vvkt_row(name)
+    row = selected_row if selected_row is not None else get_vvkt_row(name)
 
     if row is None:
 
@@ -284,6 +285,32 @@ def show_vvkt_info(name):
         "**Recepto poreikis:**",
         clean_value(row.get("recepto_poreikis"))
     )
+
+
+def show_selected_vvkt_info(chosen):
+    """Rodo pasirinktą VVKT kandidatą, o ne pirmą to paties pavadinimo eilutę."""
+    for label, key in (("Pavadinimas", "name"), ("Veiklioji medžiaga", "ingredient"),
+                       ("Stiprumas", "strength"), ("Farmacinė forma", "form"),
+                       ("Vartojimo būdas", "route")):
+        st.write(f"**{label}:**", chosen.get(key) or "nenurodyta")
+    st.caption("Patvirtinti pasirinkto VVKT kandidato duomenys. Jei OCR ir VVKT nesutampa, būtina papildoma patikra.")
+
+
+def manual_vvkt_options(name):
+    """Atskiria to paties pavadinimo VVKT pakuočių variantus."""
+    rows = get_vvkt_rows(name)
+    options = {}
+    for _, row in rows.iterrows():
+        chosen = {
+            "name": clean_value(row.get("preparato_pav")),
+            "ingredient": clean_value(row.get("veiklioji_medz_lt")),
+            "strength": clean_value(row.get("stiprumas")),
+            "form": clean_value(row.get("farmacine_forma_lt")),
+            "route": clean_value(row.get("vartojimo_budas")),
+        }
+        label = " | ".join((chosen["strength"], chosen["form"], chosen["ingredient"], chosen["route"]))
+        options[label] = chosen
+    return options
 
 
 def find_names(query):
@@ -2390,30 +2417,30 @@ if uploaded:
             else "OCR teksto neaptiko."
         )
     st.markdown(
-        "#### 🧾 Iš pakuotės aptikta informacija"
+        "#### 🧾 OCR iš pirmos pakuotės perskaityta informacija"
     )
 
     st.write(
         "**Veiklioji medžiaga:**",
         detected_ingredient
-        or "automatiškai nenustatyta"
+        or "OCR nenustatė; galimo VVKT kandidato duomenys pateikiami žemiau"
     )
 
     st.write(
         "**Stiprumas:**",
         ", ".join(strengths[:3])
         if strengths
-        else "automatiškai nenustatytas"
+        else "OCR nenustatė; galimo VVKT kandidato stiprumas pateikiamas žemiau"
     )
 
     st.write(
         "**Farmacinė forma:**",
         detected_form
-        or "automatiškai nenustatyta"
+        or "OCR nenustatė; galimo VVKT kandidato duomenys pateikiami žemiau"
     )
 
     st.markdown(
-        "#### 🔎 Galimi VVKT preparatai"
+        "#### 🔎 Galimi VVKT preparatai (duomenys nepatvirtinti, kol nepasirinkote preparato)"
     )
 
     if ranked_candidates:
@@ -2487,6 +2514,9 @@ if uploaded:
             "o ne statistinė AI tikimybė."
         )
 
+        if strengths and candidate["strength"] and not any(normalize_strength_value(x) == normalize_strength_value(candidate["strength"]) for x in strengths):
+            st.error("OCR stiprumas nesutampa su pasirinkto VVKT kandidato stiprumu. Patikrinkite preparatą prieš patvirtindami.")
+
         if st.button(
             "✅ Patvirtinti preparatą",
             type="primary"
@@ -2495,6 +2525,7 @@ if uploaded:
             st.session_state[
                 "first_vvkt_drug"
             ] = candidate["name"]
+            st.session_state["first_vvkt_selected"] = dict(candidate)
 
             st.success(
                 f"✅ Patvirtinta: {candidate['name']}"
@@ -2587,9 +2618,14 @@ if first_query:
             key="manual_first"
         )
 
-        show_vvkt_info(
-            manual_first
+        first_options = manual_vvkt_options(manual_first)
+        first_variant = st.selectbox(
+            "Pasirinkite tikslų stiprumą ir farmacinę formą",
+            list(first_options),
+            key="manual_first_variant",
         )
+        first_chosen = first_options[first_variant]
+        show_selected_vvkt_info(first_chosen)
 
         if st.button(
             "✅ Naudoti šį preparatą"
@@ -2598,6 +2634,7 @@ if first_query:
             st.session_state[
                 "first_vvkt_drug"
             ] = manual_first
+            st.session_state["first_vvkt_selected"] = dict(first_chosen)
 
             st.rerun()
 
@@ -2625,7 +2662,11 @@ if first:
         f"💊 {first}"
     )
 
-    show_vvkt_info(first)
+    chosen = st.session_state.get("first_vvkt_selected")
+    if chosen and chosen.get("name") == first:
+        show_selected_vvkt_info(chosen)
+    else:
+        show_vvkt_info(first)
 
 else:
 
@@ -2775,6 +2816,7 @@ if second_uploaded:
         st.session_state[
             "second_vvkt_drug"
         ] = None
+        st.session_state["second_vvkt_selected"] = None
 
     else:
 
@@ -2821,30 +2863,30 @@ if second_uploaded:
         )
 
     st.markdown(
-        "#### 🧾 Iš antros pakuotės aptikta informacija"
+        "#### 🧾 OCR iš antros pakuotės perskaityta informacija"
     )
 
     st.write(
         "**Veiklioji medžiaga:**",
         second_detected_ingredient
-        or "automatiškai nenustatyta"
+        or "OCR nenustatė; galimo VVKT kandidato sudėtis pateikiama žemiau"
     )
 
     st.write(
         "**Stiprumas:**",
         ", ".join(second_strengths[:3])
         if second_strengths
-        else "automatiškai nenustatytas"
+        else "OCR nenustatė; galimo VVKT kandidato stiprumas pateikiamas žemiau"
     )
 
     st.write(
         "**Farmacinė forma:**",
         second_detected_form
-        or "automatiškai nenustatyta"
+        or "OCR nenustatė; galimo VVKT kandidato duomenys pateikiami žemiau"
     )
 
     st.markdown(
-        "#### 🔎 Galimi VVKT preparatai"
+        "#### 🔎 Galimi VVKT preparatai (duomenys nepatvirtinti, kol nepasirinkote preparato)"
     )
 
     if second_ranked_candidates:
@@ -2898,7 +2940,7 @@ if second_uploaded:
         )
 
         st.write(
-            "**Veiklioji medžiaga:**",
+            "**Veiklioji medžiaga (VVKT kandidatas, dar nepatvirtinta):**",
             second_candidate["ingredient"]
         )
 
@@ -2925,6 +2967,7 @@ if second_uploaded:
             st.session_state[
                 "second_vvkt_drug"
             ] = second_candidate["name"]
+            st.session_state["second_vvkt_selected"] = dict(second_candidate)
 
             st.success(
                 f"✅ Patvirtinta: "
@@ -2967,9 +3010,14 @@ if second_query:
             key="manual_second"
         )
 
-        show_vvkt_info(
-            manual_second
+        second_options = manual_vvkt_options(manual_second)
+        second_variant = st.selectbox(
+            "Pasirinkite tikslų stiprumą ir farmacinę formą",
+            list(second_options),
+            key="manual_second_variant",
         )
+        second_chosen = second_options[second_variant]
+        show_selected_vvkt_info(second_chosen)
 
         if st.button(
             "✅ Naudoti šį antrą preparatą"
@@ -2978,6 +3026,7 @@ if second_query:
             st.session_state[
                 "second_vvkt_drug"
             ] = manual_second
+            st.session_state["second_vvkt_selected"] = dict(second_chosen)
 
             st.success(
                 f"✅ Patvirtinta: {manual_second}"
@@ -2995,9 +3044,59 @@ if second:
         f"💊 Patvirtintas antras preparatas: {second}"
     )
 
-    show_vvkt_info(
-        second
-    )
+    chosen = st.session_state.get("second_vvkt_selected")
+    if chosen and chosen.get("name") == second:
+        show_selected_vvkt_info(chosen)
+    else:
+        show_vvkt_info(second)
+
+
+# Demonstracinis perspėjimas automatiškai perskaičiuojamas keičiant pasirinkimą.
+# Vienareikšmiškumo reikalavimas: skirtingų VVKT eilučių reikšmės nespėjamos.
+def _demo_info(name, quantity, chosen=None):
+    if chosen and chosen.get("name") == name:
+        return {"name": name, "ingredient": chosen.get("ingredient"), "strength": chosen.get("strength"), "form": chosen.get("form"), "quantity": quantity}
+    rows = get_vvkt_rows(name)
+    if rows.empty:
+        return {"name": name, "ingredient": None, "strength": None, "form": None, "quantity": quantity}
+    result = {"name": name, "quantity": quantity}
+    for target, column in (("ingredient", "veiklioji_medz_lt"), ("strength", "stiprumas"), ("form", "farmacine_forma_lt")):
+        values = {str(v).strip() for v in rows[column].dropna() if str(v).strip()}
+        result[target] = next(iter(values)) if len(values) == 1 else None
+    return result
+
+if first and second:
+    st.markdown("### 🛡️ Vaistų derinio patikra")
+    st.caption("Patikra skirta universiteto demonstracijai, ne medicininiam suderinamumui nustatyti.")
+    q1, q2 = st.columns(2)
+    with q1:
+        first_qty = st.number_input(f"{first}: vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_first")
+    with q2:
+        second_qty = st.number_input(f"{second}: vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_second")
+    demo_items = [_demo_info(first, int(first_qty), st.session_state.get("first_vvkt_selected")), _demo_info(second, int(second_qty), st.session_state.get("second_vvkt_selected"))]
+    demo_warnings, demo_notes, demo_components = analyze_demo_risk(demo_items)
+    st.markdown("**Atpažintos veikliosios medžiagos**")
+    for comp in demo_components:
+        mg_text = f"{comp['mg']:g} mg" if comp['mg'] is not None else "kiekis neapskaičiuotas"
+        st.write(f"• {comp['name']}: {comp['ingredient']} – {mg_text}")
+    st.markdown("**Demonstracinės patikros išvada**")
+    for warning in demo_warnings:
+        st.warning(warning)
+    for note in demo_notes:
+        st.info(note)
+    if not demo_warnings and not demo_notes:
+        st.info("Pagal turimus duomenis demonstracinės perspėjimo sąlygos nenustatytos.")
+    st.caption("Tikrinamas galimas veikliųjų medžiagų dubliavimas. Skirtingų medžiagų mg sumos nėra medicininis rizikos kriterijus. Perspėjimo nebuvimas nereiškia, kad vaistus saugu vartoti kartu.")
+    current_signature = (first, second, int(first_qty), int(second_qty), tuple(demo_warnings))
+    if st.session_state.get("demo_ack_signature") != current_signature and demo_warnings:
+        @st.dialog("⚠️ Dėmesio! Galima vaistų vartojimo rizika!")
+        def _demo_popup():
+            st.warning("Pasirinktas vaistų derinys atitinka vieną ar kelis demonstracinius perspėjimo kriterijus. Kartu vartojant šiuos vaistus gali kilti nepageidaujamų reakcijų arba dozės dubliavimo rizika. Prieš vartodami šiuos vaistus kartu, pasitarkite su gydytoju arba vaistininku.")
+            st.caption("Tai nėra medicininė sąveikų patikra ar saugumo patvirtinimas.")
+            if st.button("Gerai", key="demo_ack_button"):
+                st.session_state["demo_ack_signature"] = current_signature
+                st.rerun()
+        _demo_popup()
 
 
 # =========================================================
@@ -3039,16 +3138,23 @@ if st.button(
 
     else:
 
-        first_row = get_vvkt_row(first)
-        second_row = get_vvkt_row(second)
+        # Pasirinkto kandidato duomenys turi pirmenybę prieš paiešką vien pagal pavadinimą.
+        first_selected = st.session_state.get("first_vvkt_selected")
+        second_selected = st.session_state.get("second_vvkt_selected")
+        if not (first_selected and first_selected.get("name") == first):
+            first_selected = None
+        if not (second_selected and second_selected.get("name") == second):
+            second_selected = None
+        first_row = None if first_selected else get_vvkt_row(first)
+        second_row = None if second_selected else get_vvkt_row(second)
 
-        ingredient_1 = get_vvkt_ingredient(
-            first
-        )
-
-        ingredient_2 = get_vvkt_ingredient(
-            second
-        )
+        ingredient_1 = (first_selected.get("ingredient") if first_selected
+                        else get_vvkt_ingredient(first))
+        ingredient_2 = (second_selected.get("ingredient") if second_selected
+                        else get_vvkt_ingredient(second))
+        if not first_selected or not second_selected:
+            st.info("Rankiniu būdu pasirinktam vaistui VVKT gali turėti kelis stiprumus. "
+                    "Jeigu variantas nepatvirtintas tiksliai, būtina papildoma patikra.")
 
         st.subheader(
             f"💊 {first} + {second}"
@@ -3075,23 +3181,13 @@ if st.button(
                 ingredient_1 or "—"
             )
 
-            if first_row is not None:
-
-                st.write(
-                    "**Stiprumas:**",
-                    clean_value(
-                        first_row.get("stiprumas")
-                    )
-                )
-
-                st.write(
-                    "**Farmacinė forma:**",
-                    clean_value(
-                        first_row.get(
-                            "farmacine_forma_lt"
-                        )
-                    )
-                )
+            if first_selected:
+                st.write("**Stiprumas:**", first_selected.get("strength") or "nenurodyta")
+                st.write("**Farmacinė forma:**", first_selected.get("form") or "nenurodyta")
+                st.caption("Duomenys iš konkretaus patvirtinto VVKT kandidato.")
+            elif first_row is not None:
+                st.write("**Stiprumas:**", clean_value(first_row.get("stiprumas")))
+                st.write("**Farmacinė forma:**", clean_value(first_row.get("farmacine_forma_lt")))
 
         with col2:
 
@@ -3104,23 +3200,13 @@ if st.button(
                 ingredient_2 or "—"
             )
 
-            if second_row is not None:
-
-                st.write(
-                    "**Stiprumas:**",
-                    clean_value(
-                        second_row.get("stiprumas")
-                    )
-                )
-
-                st.write(
-                    "**Farmacinė forma:**",
-                    clean_value(
-                        second_row.get(
-                            "farmacine_forma_lt"
-                        )
-                    )
-                )
+            if second_selected:
+                st.write("**Stiprumas:**", second_selected.get("strength") or "nenurodyta")
+                st.write("**Farmacinė forma:**", second_selected.get("form") or "nenurodyta")
+                st.caption("Duomenys iš konkretaus patvirtinto VVKT kandidato.")
+            elif second_row is not None:
+                st.write("**Stiprumas:**", clean_value(second_row.get("stiprumas")))
+                st.write("**Farmacinė forma:**", clean_value(second_row.get("farmacine_forma_lt")))
 
         # =================================================
         # KAIP VEIKIA KARTU

@@ -1,0 +1,1 @@
+Demonstracinės taisyklės: demo_risk_rules.py; integracija: app.py. Paleidimas: streamlit run app.py. Tik mediciniškai nepatvirtintos ribos. VVKT variantams su skirtingais stiprumais reikalingas tikslesnis pakuotės pasirinkimas. Testuota sintaksė ir keturi taisyklių scenarijai; Streamlit naršyklės sąsaja netestuota.
