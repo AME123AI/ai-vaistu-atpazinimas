@@ -296,6 +296,23 @@ def show_selected_vvkt_info(chosen):
     st.caption("Patvirtinti pasirinkto VVKT kandidato duomenys. Jei OCR ir VVKT nesutampa, būtina papildoma patikra.")
 
 
+def manual_vvkt_options(name):
+    """Atskiria to paties pavadinimo VVKT pakuočių variantus."""
+    rows = get_vvkt_rows(name)
+    options = {}
+    for _, row in rows.iterrows():
+        chosen = {
+            "name": clean_value(row.get("preparato_pav")),
+            "ingredient": clean_value(row.get("veiklioji_medz_lt")),
+            "strength": clean_value(row.get("stiprumas")),
+            "form": clean_value(row.get("farmacine_forma_lt")),
+            "route": clean_value(row.get("vartojimo_budas")),
+        }
+        label = " | ".join((chosen["strength"], chosen["form"], chosen["ingredient"], chosen["route"]))
+        options[label] = chosen
+    return options
+
+
 def find_names(query):
 
     if not query:
@@ -2601,9 +2618,14 @@ if first_query:
             key="manual_first"
         )
 
-        show_vvkt_info(
-            manual_first
+        first_options = manual_vvkt_options(manual_first)
+        first_variant = st.selectbox(
+            "Pasirinkite tikslų stiprumą ir farmacinę formą",
+            list(first_options),
+            key="manual_first_variant",
         )
+        first_chosen = first_options[first_variant]
+        show_selected_vvkt_info(first_chosen)
 
         if st.button(
             "✅ Naudoti šį preparatą"
@@ -2612,7 +2634,7 @@ if first_query:
             st.session_state[
                 "first_vvkt_drug"
             ] = manual_first
-            st.session_state["first_vvkt_selected"] = None
+            st.session_state["first_vvkt_selected"] = dict(first_chosen)
 
             st.rerun()
 
@@ -2988,9 +3010,14 @@ if second_query:
             key="manual_second"
         )
 
-        show_vvkt_info(
-            manual_second
+        second_options = manual_vvkt_options(manual_second)
+        second_variant = st.selectbox(
+            "Pasirinkite tikslų stiprumą ir farmacinę formą",
+            list(second_options),
+            key="manual_second_variant",
         )
+        second_chosen = second_options[second_variant]
+        show_selected_vvkt_info(second_chosen)
 
         if st.button(
             "✅ Naudoti šį antrą preparatą"
@@ -2999,7 +3026,7 @@ if second_query:
             st.session_state[
                 "second_vvkt_drug"
             ] = manual_second
-            st.session_state["second_vvkt_selected"] = None
+            st.session_state["second_vvkt_selected"] = dict(second_chosen)
 
             st.success(
                 f"✅ Patvirtinta: {manual_second}"
