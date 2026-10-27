@@ -1,4 +1,4 @@
-from demo_risk_rules import evaluate as evaluate_demo_risk
+from demo_risk_rules import analyze as analyze_demo_risk
 from pathlib import Path
 import json
 import re
@@ -3039,19 +3039,27 @@ def _demo_info(name, quantity, chosen=None):
     return result
 
 if first and second:
-    st.markdown("### ⚠️ Demonstracinė rizikos patikra")
+    st.markdown("### 🛡️ Vaistų derinio patikra")
+    st.caption("Patikra skirta universiteto demonstracijai, ne medicininiam suderinamumui nustatyti.")
     q1, q2 = st.columns(2)
     with q1:
-        first_qty = st.number_input("Pirmojo preparato vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_first")
+        first_qty = st.number_input(f"{first}: vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_first")
     with q2:
-        second_qty = st.number_input("Antrojo preparato vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_second")
+        second_qty = st.number_input(f"{second}: vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_second")
     demo_items = [_demo_info(first, int(first_qty), st.session_state.get("first_vvkt_selected")), _demo_info(second, int(second_qty), st.session_state.get("second_vvkt_selected"))]
-    demo_warnings, demo_notes = evaluate_demo_risk(demo_items)
+    demo_warnings, demo_notes, demo_components = analyze_demo_risk(demo_items)
+    st.markdown("**Atpažintos veikliosios medžiagos**")
+    for comp in demo_components:
+        mg_text = f"{comp['mg']:g} mg" if comp['mg'] is not None else "kiekis neapskaičiuotas"
+        st.write(f"• {comp['name']}: {comp['ingredient']} – {mg_text}")
+    st.markdown("**Demonstracinės patikros išvada**")
     for warning in demo_warnings:
         st.warning(warning)
     for note in demo_notes:
         st.info(note)
-    st.caption("Tik universiteto demonstracinės taisyklės. 500 mg ir 700 mg nėra medicininės saugumo ribos. Perspėjimo nebuvimas nereiškia, kad vaistų derinys saugus.")
+    if not demo_warnings and not demo_notes:
+        st.info("Pagal turimus duomenis demonstracinės perspėjimo sąlygos nenustatytos.")
+    st.caption("500 mg ir 700 mg yra tik programinės demonstracinės ribos, o ne mediciniškai pagrįsti kriterijai. Skirtingų medžiagų mg suma neįrodo rizikos ar saugumo. Perspėjimo nebuvimas nereiškia, kad vaistus saugu vartoti kartu.")
     current_signature = (first, second, int(first_qty), int(second_qty), tuple(demo_warnings))
     if st.session_state.get("demo_ack_signature") != current_signature and demo_warnings:
         @st.dialog("⚠️ Dėmesio! Galima vaistų vartojimo rizika!")
