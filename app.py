@@ -243,9 +243,9 @@ def get_vvkt_ingredient(name):
     return value if value else None
 
 
-def show_vvkt_info(name):
+def show_vvkt_info(name, selected_row=None):
 
-    row = get_vvkt_row(name)
+    row = selected_row if selected_row is not None else get_vvkt_row(name)
 
     if row is None:
 
@@ -285,6 +285,15 @@ def show_vvkt_info(name):
         "**Recepto poreikis:**",
         clean_value(row.get("recepto_poreikis"))
     )
+
+
+def show_selected_vvkt_info(chosen):
+    """Rodo pasirinktą VVKT kandidatą, o ne pirmą to paties pavadinimo eilutę."""
+    for label, key in (("Pavadinimas", "name"), ("Veiklioji medžiaga", "ingredient"),
+                       ("Stiprumas", "strength"), ("Farmacinė forma", "form"),
+                       ("Vartojimo būdas", "route")):
+        st.write(f"**{label}:**", chosen.get(key) or "nenurodyta")
+    st.caption("Patvirtinti pasirinkto VVKT kandidato duomenys. Jei OCR ir VVKT nesutampa, būtina papildoma patikra.")
 
 
 def find_names(query):
@@ -2488,6 +2497,9 @@ if uploaded:
             "o ne statistinė AI tikimybė."
         )
 
+        if strengths and candidate["strength"] and not any(normalize_strength_value(x) == normalize_strength_value(candidate["strength"]) for x in strengths):
+            st.error("OCR stiprumas nesutampa su pasirinkto VVKT kandidato stiprumu. Patikrinkite preparatą prieš patvirtindami.")
+
         if st.button(
             "✅ Patvirtinti preparatą",
             type="primary"
@@ -2496,6 +2508,7 @@ if uploaded:
             st.session_state[
                 "first_vvkt_drug"
             ] = candidate["name"]
+            st.session_state["first_vvkt_selected"] = dict(candidate)
 
             st.success(
                 f"✅ Patvirtinta: {candidate['name']}"
@@ -2599,6 +2612,7 @@ if first_query:
             st.session_state[
                 "first_vvkt_drug"
             ] = manual_first
+            st.session_state["first_vvkt_selected"] = None
 
             st.rerun()
 
@@ -2626,7 +2640,11 @@ if first:
         f"💊 {first}"
     )
 
-    show_vvkt_info(first)
+    chosen = st.session_state.get("first_vvkt_selected")
+    if chosen and chosen.get("name") == first:
+        show_selected_vvkt_info(chosen)
+    else:
+        show_vvkt_info(first)
 
 else:
 
@@ -2776,6 +2794,7 @@ if second_uploaded:
         st.session_state[
             "second_vvkt_drug"
         ] = None
+        st.session_state["second_vvkt_selected"] = None
 
     else:
 
@@ -2926,6 +2945,7 @@ if second_uploaded:
             st.session_state[
                 "second_vvkt_drug"
             ] = second_candidate["name"]
+            st.session_state["second_vvkt_selected"] = dict(second_candidate)
 
             st.success(
                 f"✅ Patvirtinta: "
@@ -2979,6 +2999,7 @@ if second_query:
             st.session_state[
                 "second_vvkt_drug"
             ] = manual_second
+            st.session_state["second_vvkt_selected"] = None
 
             st.success(
                 f"✅ Patvirtinta: {manual_second}"
@@ -2996,14 +3017,18 @@ if second:
         f"💊 Patvirtintas antras preparatas: {second}"
     )
 
-    show_vvkt_info(
-        second
-    )
+    chosen = st.session_state.get("second_vvkt_selected")
+    if chosen and chosen.get("name") == second:
+        show_selected_vvkt_info(chosen)
+    else:
+        show_vvkt_info(second)
 
 
 # Demonstracinis perspėjimas automatiškai perskaičiuojamas keičiant pasirinkimą.
 # Vienareikšmiškumo reikalavimas: skirtingų VVKT eilučių reikšmės nespėjamos.
-def _demo_info(name, quantity):
+def _demo_info(name, quantity, chosen=None):
+    if chosen and chosen.get("name") == name:
+        return {"name": name, "ingredient": chosen.get("ingredient"), "strength": chosen.get("strength"), "form": chosen.get("form"), "quantity": quantity}
     rows = get_vvkt_rows(name)
     if rows.empty:
         return {"name": name, "ingredient": None, "strength": None, "form": None, "quantity": quantity}
@@ -3020,7 +3045,7 @@ if first and second:
         first_qty = st.number_input("Pirmojo preparato vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_first")
     with q2:
         second_qty = st.number_input("Antrojo preparato vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_second")
-    demo_items = [_demo_info(first, int(first_qty)), _demo_info(second, int(second_qty))]
+    demo_items = [_demo_info(first, int(first_qty), st.session_state.get("first_vvkt_selected")), _demo_info(second, int(second_qty), st.session_state.get("second_vvkt_selected"))]
     demo_warnings, demo_notes = evaluate_demo_risk(demo_items)
     for warning in demo_warnings:
         st.warning(warning)
