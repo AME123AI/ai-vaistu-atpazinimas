@@ -2417,30 +2417,30 @@ if uploaded:
             else "OCR teksto neaptiko."
         )
     st.markdown(
-        "#### 🧾 Iš pakuotės aptikta informacija"
+        "#### 🧾 OCR iš pirmos pakuotės perskaityta informacija"
     )
 
     st.write(
         "**Veiklioji medžiaga:**",
         detected_ingredient
-        or "automatiškai nenustatyta"
+        or "OCR nenustatė; galimo VVKT kandidato duomenys pateikiami žemiau"
     )
 
     st.write(
         "**Stiprumas:**",
         ", ".join(strengths[:3])
         if strengths
-        else "automatiškai nenustatytas"
+        else "OCR nenustatė; galimo VVKT kandidato stiprumas pateikiamas žemiau"
     )
 
     st.write(
         "**Farmacinė forma:**",
         detected_form
-        or "automatiškai nenustatyta"
+        or "OCR nenustatė; galimo VVKT kandidato duomenys pateikiami žemiau"
     )
 
     st.markdown(
-        "#### 🔎 Galimi VVKT preparatai"
+        "#### 🔎 Galimi VVKT preparatai (duomenys nepatvirtinti, kol nepasirinkote preparato)"
     )
 
     if ranked_candidates:
@@ -2863,30 +2863,30 @@ if second_uploaded:
         )
 
     st.markdown(
-        "#### 🧾 Iš antros pakuotės aptikta informacija"
+        "#### 🧾 OCR iš antros pakuotės perskaityta informacija"
     )
 
     st.write(
         "**Veiklioji medžiaga:**",
         second_detected_ingredient
-        or "OCR nenustatė; žr. žemiau VVKT kandidato sudėtį"
+        or "OCR nenustatė; galimo VVKT kandidato sudėtis pateikiama žemiau"
     )
 
     st.write(
         "**Stiprumas:**",
         ", ".join(second_strengths[:3])
         if second_strengths
-        else "automatiškai nenustatytas"
+        else "OCR nenustatė; galimo VVKT kandidato stiprumas pateikiamas žemiau"
     )
 
     st.write(
         "**Farmacinė forma:**",
         second_detected_form
-        or "automatiškai nenustatyta"
+        or "OCR nenustatė; galimo VVKT kandidato duomenys pateikiami žemiau"
     )
 
     st.markdown(
-        "#### 🔎 Galimi VVKT preparatai"
+        "#### 🔎 Galimi VVKT preparatai (duomenys nepatvirtinti, kol nepasirinkote preparato)"
     )
 
     if second_ranked_candidates:

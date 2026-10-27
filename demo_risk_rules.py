@@ -8,17 +8,37 @@ LIMIT_DIFFERENT_MG = 700
 EXCLUDED_FORMS = ('tepal', 'purškal', 'purskal', 'gelis', 'geliai', 'krem', 'tirpalas odai')
 
 def _parts(text):
-    return [p.strip() for p in re.split(r'\s*[/;+]\s*', str(text or '')) if p.strip()]
+    """Skiria VVKT ingredientus tik už skliaustų; botaninių rūšių '/' išsaugo."""
+    value = str(text or '').strip()
+    parts, current, depth = [], [], 0
+    for char in value:
+        if char == '(':
+            depth += 1
+        elif char == ')':
+            depth = max(0, depth - 1)
+        if depth == 0 and char in '/;+':
+            part = ''.join(current).strip()
+            if part:
+                parts.append(part)
+            current = []
+        else:
+            current.append(char)
+    part = ''.join(current).strip()
+    if part:
+        parts.append(part)
+    return parts
+
 
 def _strengths(text):
-    parts = _parts(text)
+    parts = [p.strip() for p in re.split(r'[/;+]', str(text or '')) if p.strip()]
     values = []
-    for p in parts:
-        m = re.fullmatch(r'(\d+(?:[.,]\d+)?)\s*mg', p, re.I)
-        if not m:
+    for part in parts:
+        match = re.fullmatch(r'(\d+(?:[.,]\d+)?)\s*mg', part, re.I)
+        if not match:
             return None
-        values.append(float(m.group(1).replace(',', '.')))
+        values.append(float(match.group(1).replace(',', '.')))
     return values
+
 
 def _ingredient_key(value):
     """Tik aiškiai apibrėžtas sinonimų grupes laikome susijusiomis.
