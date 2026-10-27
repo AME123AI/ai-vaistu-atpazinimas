@@ -2847,7 +2847,7 @@ if second_uploaded:
     st.write(
         "**Veiklioji medžiaga:**",
         second_detected_ingredient
-        or "automatiškai nenustatyta"
+        or "OCR nenustatė; žr. žemiau VVKT kandidato sudėtį"
     )
 
     st.write(
@@ -2918,7 +2918,7 @@ if second_uploaded:
         )
 
         st.write(
-            "**Veiklioji medžiaga:**",
+            "**Veiklioji medžiaga (VVKT kandidatas, dar nepatvirtinta):**",
             second_candidate["ingredient"]
         )
 
@@ -3103,16 +3103,23 @@ if st.button(
 
     else:
 
-        first_row = get_vvkt_row(first)
-        second_row = get_vvkt_row(second)
+        # Pasirinkto kandidato duomenys turi pirmenybę prieš paiešką vien pagal pavadinimą.
+        first_selected = st.session_state.get("first_vvkt_selected")
+        second_selected = st.session_state.get("second_vvkt_selected")
+        if not (first_selected and first_selected.get("name") == first):
+            first_selected = None
+        if not (second_selected and second_selected.get("name") == second):
+            second_selected = None
+        first_row = None if first_selected else get_vvkt_row(first)
+        second_row = None if second_selected else get_vvkt_row(second)
 
-        ingredient_1 = get_vvkt_ingredient(
-            first
-        )
-
-        ingredient_2 = get_vvkt_ingredient(
-            second
-        )
+        ingredient_1 = (first_selected.get("ingredient") if first_selected
+                        else get_vvkt_ingredient(first))
+        ingredient_2 = (second_selected.get("ingredient") if second_selected
+                        else get_vvkt_ingredient(second))
+        if not first_selected or not second_selected:
+            st.info("Rankiniu būdu pasirinktam vaistui VVKT gali turėti kelis stiprumus. "
+                    "Jeigu variantas nepatvirtintas tiksliai, būtina papildoma patikra.")
 
         st.subheader(
             f"💊 {first} + {second}"
@@ -3139,23 +3146,13 @@ if st.button(
                 ingredient_1 or "—"
             )
 
-            if first_row is not None:
-
-                st.write(
-                    "**Stiprumas:**",
-                    clean_value(
-                        first_row.get("stiprumas")
-                    )
-                )
-
-                st.write(
-                    "**Farmacinė forma:**",
-                    clean_value(
-                        first_row.get(
-                            "farmacine_forma_lt"
-                        )
-                    )
-                )
+            if first_selected:
+                st.write("**Stiprumas:**", first_selected.get("strength") or "nenurodyta")
+                st.write("**Farmacinė forma:**", first_selected.get("form") or "nenurodyta")
+                st.caption("Duomenys iš konkretaus patvirtinto VVKT kandidato.")
+            elif first_row is not None:
+                st.write("**Stiprumas:**", clean_value(first_row.get("stiprumas")))
+                st.write("**Farmacinė forma:**", clean_value(first_row.get("farmacine_forma_lt")))
 
         with col2:
 
@@ -3168,23 +3165,13 @@ if st.button(
                 ingredient_2 or "—"
             )
 
-            if second_row is not None:
-
-                st.write(
-                    "**Stiprumas:**",
-                    clean_value(
-                        second_row.get("stiprumas")
-                    )
-                )
-
-                st.write(
-                    "**Farmacinė forma:**",
-                    clean_value(
-                        second_row.get(
-                            "farmacine_forma_lt"
-                        )
-                    )
-                )
+            if second_selected:
+                st.write("**Stiprumas:**", second_selected.get("strength") or "nenurodyta")
+                st.write("**Farmacinė forma:**", second_selected.get("form") or "nenurodyta")
+                st.caption("Duomenys iš konkretaus patvirtinto VVKT kandidato.")
+            elif second_row is not None:
+                st.write("**Stiprumas:**", clean_value(second_row.get("stiprumas")))
+                st.write("**Farmacinė forma:**", clean_value(second_row.get("farmacine_forma_lt")))
 
         # =================================================
         # KAIP VEIKIA KARTU
