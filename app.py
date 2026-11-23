@@ -2074,8 +2074,16 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
                 candidate_names.append(value)
     results = []
     seen = set()
+    # OCR eilutės gali atskirti vieno prekės ženklo žodžius (IBUPROM / EXPRESS).
+    # Patikriname visą VVKT pavadinimą visame OCR tekste, nekeisdami OCR.
+    ocr_whole = normalize_text(ocr_text)
     for name in candidate_names:
         ns = name_score(name, ocr_text)
+        full_name = normalize_text(name)
+        if len(full_name.split()) >= 2 and re.search(
+            r"(?<![a-z0-9])" + re.escape(full_name) + r"(?![a-z0-9])", ocr_whole
+        ):
+            ns = max(ns, 1.0)
         if ns < 0.55:
             continue
         rows = get_vvkt_rows(name)
