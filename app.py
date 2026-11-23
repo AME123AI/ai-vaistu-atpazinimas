@@ -2350,37 +2350,29 @@ if uploaded:
                 # 2 ETAPAS – PADDLEOCR
                 # =========================================
 
-                paddle_text = run_paddle_ocr(
-                    image
-                )
-
-                combined_parts = []
-
-                if fast_ocr_text:
-                    combined_parts.append(
-                        fast_ocr_text
-                    )
-
-                if paddle_text:
-                    combined_parts.append(
-                        paddle_text
-                    )
-
-                ocr_text = "\n".join(
-                    dict.fromkeys(
-                        combined_parts
-                    )
-                )
-
-                ranked_candidates = rank_vvkt_candidates(
-                    ocr_text,
-                    top_n=5
-                )
-
-                if paddle_text:
-                    ocr_engine = "Tesseract + PaddleOCR"
+                # Prieš atminties imlų PaddleOCR atliekame pigesnį
+                # pasuktos nuotraukos Tesseract patikrinimą.
+                fallback_text = run_fallback_ocr(image, fast_ocr_text)
+                fallback_candidates = rank_vvkt_candidates(fallback_text, top_n=5)
+                if fallback_candidates and (
+                    fallback_candidates[0].get("brand_evidence", 0) >= 2
+                    and fallback_candidates[0].get("ocr_strength_match") is not False
+                    and fallback_candidates[0].get("ocr_form_match") is not False
+                ):
+                    ocr_text = fallback_text
+                    ranked_candidates = fallback_candidates
+                    ocr_engine = "Tesseract + papildomos orientacijos"
                 else:
-                    ocr_engine = "Tesseract"
+                    # PaddleOCR paleidžiamas tik jei paprastesnio OCR nepakanka.
+                    paddle_text = run_paddle_ocr(image)
+                    ocr_text = "\n".join(dict.fromkeys(
+                        part for part in (fallback_text, paddle_text) if part
+                    ))
+                    ranked_candidates = rank_vvkt_candidates(ocr_text, top_n=5)
+                    ocr_engine = (
+                        "Tesseract + papildomos orientacijos + PaddleOCR"
+                        if paddle_text else "Tesseract + papildomos orientacijos"
+                    )
 
         # =============================================
         # IŠSAUGOME ŠIOS NUOTRAUKOS REZULTATĄ
@@ -2692,8 +2684,9 @@ st.divider()
 
 st.markdown(
     '<div class="step">'
-    '✅ 3. Patvirtinkite rezultatą'
-    '</div>',
+    + ('✅ 3. Patvirtintas rezultatas' if st.session_state.get('first_vvkt_drug')
+       else '✅ 3. Patvirtinkite rezultatą')
+    + '</div>',
     unsafe_allow_html=True
 )
 
@@ -2807,42 +2800,35 @@ if second_uploaded:
 
             else:
 
-                # 2 etapas – PaddleOCR
-                second_paddle_text = run_paddle_ocr(
-                    second_image
+                # 2 etapas – papildomos orientacijos bei kontrastas.
+                # Pirmiausia taupome RAM: Tesseract, tik tada PaddleOCR.
+                second_fallback_text = run_fallback_ocr(
+                    second_image, second_fast_text
                 )
-
-                second_combined_parts = []
-
-                if second_fast_text:
-                    second_combined_parts.append(
-                        second_fast_text
-                    )
-
-                if second_paddle_text:
-                    second_combined_parts.append(
-                        second_paddle_text
-                    )
-
-                second_ocr_text = "\n".join(
-                    dict.fromkeys(
-                        second_combined_parts
-                    )
+                second_fallback_candidates = rank_vvkt_candidates(
+                    second_fallback_text, top_n=5
                 )
-
-                second_ranked_candidates = (
-                    rank_vvkt_candidates(
-                        second_ocr_text,
-                        top_n=5
-                    )
-                )
-
-                if second_paddle_text:
-                    second_ocr_engine = (
-                        "Tesseract + PaddleOCR"
-                    )
+                if second_fallback_candidates and (
+                    second_fallback_candidates[0].get("brand_evidence", 0) >= 2
+                    and second_fallback_candidates[0].get("ocr_strength_match") is not False
+                    and second_fallback_candidates[0].get("ocr_form_match") is not False
+                ):
+                    second_ocr_text = second_fallback_text
+                    second_ranked_candidates = second_fallback_candidates
+                    second_ocr_engine = "Tesseract + papildomos orientacijos"
                 else:
-                    second_ocr_engine = "Tesseract"
+                    second_paddle_text = run_paddle_ocr(second_image)
+                    second_ocr_text = "\n".join(dict.fromkeys(
+                        part for part in (second_fallback_text, second_paddle_text)
+                        if part
+                    ))
+                    second_ranked_candidates = rank_vvkt_candidates(
+                        second_ocr_text, top_n=5
+                    )
+                    second_ocr_engine = (
+                        "Tesseract + papildomos orientacijos + PaddleOCR"
+                        if second_paddle_text else "Tesseract + papildomos orientacijos"
+                    )
 
         # Išsaugome tik antro vaisto OCR rezultatą.
         st.session_state[
@@ -2934,6 +2920,13 @@ if second_uploaded:
         second_detected_form
         or "OCR nenustatė; galimo VVKT kandidato duomenys pateikiami žemiau"
     )
+
+    if not second_ocr_text.strip():
+        st.warning(
+            "Antros pakuotės teksto nuskaityti nepavyko. "
+            "Pabandykite aiškesnę, tiesesnę nuotrauką arba naudokite "
+            "žemiau esančią rankinę preparato paiešką."
+        )
 
     st.markdown(
         "#### 🔎 Galimi VVKT preparatai (duomenys nepatvirtinti, kol nepasirinkote preparato)"
