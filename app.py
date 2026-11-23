@@ -2099,6 +2099,21 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
     found_ingredient = detect_ingredient(ocr_text)
     found_strengths = extract_strengths(ocr_text)
     found_form = detect_form(ocr_text)
+    # Jei OCR mato pavadinimo pradžią, įtraukiame ir ilgesnius to paties
+    # prekės ženklo variantus. Pvz. IBUPROM -> IBUPROM EXPRESS. Tai NĖRA
+    # tapatybės patvirtinimas – galutinį variantą patvirtina vartotojas.
+    ocr_norm_for_names = normalize_text(ocr_text)
+    for known_name in vvkt_names:
+        known_norm = normalize_text(known_name)
+        parts = known_norm.split()
+        if len(parts) < 2 or known_name in candidate_names:
+            continue
+        first_word = parts[0]
+        if len(first_word) >= 5 and re.search(
+            r"(?<![a-z0-9])" + re.escape(first_word) + r"(?![a-z0-9])",
+            ocr_norm_for_names
+        ):
+            candidate_names.append(known_name)
     if found_ingredient and len(candidate_names) < 8:
         matched_rows = vvkt[
             vvkt["veiklioji_medz_lt"].fillna("").astype(str).apply(normalize_text)
@@ -2111,7 +2126,10 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
     seen = set()
     for name in candidate_names:
         ns = name_score(name, ocr_text)
-        if ns < 0.55:
+        # OCR gali perskaityti tik pirmą prekės ženklo žodį.
+        # Ilgesnį variantą paliekame tik jei jo pradžia perskaityta,
+        # o stiprumą ir formą tikriname atskirai.
+        if ns < 0.55 and brand_evidence(name, ocr_text) == 0:
             continue
         rows = get_vvkt_rows(name)
         for _, row in rows.iterrows():
@@ -2142,6 +2160,13 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
                 score += 0.22 if strength_match else -0.38
             if found_form:
                 score += 0.12 if form_match else -0.22
+            # Balas nėra tikimybė. Nesuderintas stiprumas / forma
+            # niekada neturi būti rodomi kaip 100 % atitiktis.
+            if (found_strengths and not strength_match) or (found_form and not form_match):
+                score = min(score, 0.49)
+            # Tik pirmasis ilgesnio pavadinimo žodis nėra visas pavadinimas.
+            if brand_signal == 1:
+                score = min(score, 0.84)
             results.append({
                 "name": name, "ingredient": ingredient, "strength": strength,
                 "form": form, "route": route, "score": max(0.0, min(score, 1.0)),
@@ -2153,11 +2178,13 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
             })
     # Kai OCR nustatė stiprumą / formą, neprieštaraujantis variantas turi pirmenybę.
     # Kitus variantus paliekame pasirinkimui tik jei nepakanka suderintų kandidatų.
+    # Pirmiausia išlaikome aiškiai OCR nustatytą stiprumą ir formą.
+    # Net ir tikslus prekės ženklo fragmentas nesuteikia teisės
+    # patvirtinti kitą farmacinę formą (tabletės != kapsulės).
     results.sort(key=lambda r: (
-        r["brand_evidence"],
         1 if r["ocr_strength_match"] is True else (0 if r["ocr_strength_match"] is None else -1),
         1 if r["ocr_form_match"] is True else (0 if r["ocr_form_match"] is None else -1),
-        r["score"], r["name_score"]
+        r["brand_evidence"], r["score"], r["name_score"]
     ), reverse=True)
     return results[:top_n]
 
@@ -2301,6 +2328,9 @@ if uploaded:
                 fast_is_strong = (
                     top_fast["name_score"] >= 0.90
                     and top_fast["score"] >= 0.75
+                    and top_fast.get("ocr_form_match") is not False
+                    and top_fast.get("ocr_strength_match") is not False
+                    and top_fast.get("brand_evidence", 0) >= 2
                     and top_fast.get("brand_evidence", 0) > 0
                 )
 
@@ -2476,7 +2506,7 @@ if uploaded:
         c1, c2, c3 = st.columns(3)
 
         c1.metric(
-            "Bendras atitikimas",
+            "Algoritmo balas (ne tikimybė)",
             f"{candidate['score'] * 100:.0f}%"
         )
 
@@ -2520,7 +2550,7 @@ if uploaded:
         )
         if first_ocr_mismatch:
             st.error("Pasirinkto VVKT varianto stiprumas arba farmacinė forma nesutampa su OCR. Pasirinkite atitinkantį variantą arba naudokite rankinę paiešką. OCR taip pat gali suklysti.")
-        first_brand_missing = candidate.get("brand_evidence", 0) == 0
+        first_brand_missing = candidate.get("brand_evidence", 0) < 2
         if first_brand_missing:
             st.warning("OCR nepakankamai aiškiai perskaitė šio preparato prekės ženklą. Patikrinkite, ar pasirinktas VVKT pavadinimas tiksliai sutampa su pakuote.")
             first_name_checked = st.checkbox(
@@ -2759,6 +2789,9 @@ if second_uploaded:
                 second_fast_is_strong = (
                     second_top_fast["name_score"] >= 0.90
                     and second_top_fast["score"] >= 0.75
+                    and second_top_fast.get("ocr_form_match") is not False
+                    and second_top_fast.get("ocr_strength_match") is not False
+                    and second_top_fast.get("brand_evidence", 0) >= 2
                     and second_top_fast.get("brand_evidence", 0) > 0
                 )
 
@@ -2942,7 +2975,7 @@ if second_uploaded:
         second_c1, second_c2, second_c3 = st.columns(3)
 
         second_c1.metric(
-            "Bendras atitikimas",
+            "Algoritmo balas (ne tikimybė)",
             f"{second_candidate['score'] * 100:.0f}%"
         )
 
@@ -2982,7 +3015,7 @@ if second_uploaded:
         )
         if second_ocr_mismatch:
             st.error("Pasirinkto VVKT varianto stiprumas arba farmacinė forma nesutampa su OCR. Pasirinkite atitinkantį variantą arba naudokite rankinę paiešką. OCR taip pat gali suklysti.")
-        second_brand_missing = second_candidate.get("brand_evidence", 0) == 0
+        second_brand_missing = second_candidate.get("brand_evidence", 0) < 2
         if second_brand_missing:
             st.warning("OCR nepakankamai aiškiai perskaitė antrosios pakuotės prekės ženklą. Patikrinkite, ar pasirinktas VVKT pavadinimas tiksliai sutampa su pakuote.")
             second_name_checked = st.checkbox(
