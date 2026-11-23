@@ -1,24 +1,24 @@
 """Edukaciniai konkrečių veikliųjų medžiagų porų aprašai (ne medicininė rekomendacija)."""
 import csv
 from pathlib import Path
-from demo_saveikos import ingredient_set
+from demo_saveikos import normalize
 
 DATA_FILE = Path(__file__).with_name("saltiniais_pagristos_10_poru.csv")
 
 
 def find_documented_pairs(first, second, data_path=None):
-    a, b = ingredient_set(first), ingredient_set(second)
-    if not a or not b:
+    """Exact ingredient-pair lookup, order independent; never infer an interaction."""
+    a, b = normalize(first), normalize(second)
+    missing = {"", "—", "nenurodyta", "nan", "none"}
+    if a in missing or b in missing or a == b:
         return []
-    pairs = {frozenset((x, y)) for x in a for y in b if x != y}
-    if not pairs:
-        return []
+
     path = Path(data_path) if data_path else DATA_FILE
     with path.open(encoding="utf-8-sig", newline="") as f:
         records = list(csv.DictReader(f))
-    return [r for r in records
-            if frozenset((next(iter(ingredient_set(r["veiklioji_1"])), ""),
-                          next(iter(ingredient_set(r["veiklioji_2"])), ""))) in pairs]
+
+    return [r for r in records if
+            {a, b} == {normalize(r["veiklioji_1"]), normalize(r["veiklioji_2"])}]
 
 
 def show_pair_result(first, second):
