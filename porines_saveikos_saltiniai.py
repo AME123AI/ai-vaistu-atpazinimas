@@ -143,7 +143,7 @@ def show_pair_result(first, second):
     """Trumpas mokomasis poros rezultatas; medikamentų atpažinimo nekeičia."""
     import streamlit as st
     result = explain_pair(first, second)
-    st.markdown('### 🧩 Kaip šie vaistai veikia kartu?')
+    st.markdown('## 🔬 Kaip šie vaistai veikia kartu?')
 
     if result['status'] == 'truksta_sudeties':
         st.warning('Nepakanka sudėties duomenų abiem vaistams palyginti.')
@@ -187,19 +187,14 @@ def show_pair_result(first, second):
             st.caption('Rodomi 8 aktualiausi įrašai iš mokomosios duomenų bazės.')
     elif not result['shared']:
         st.info('**Sudėties palyginimas:** tų pačių veikliųjų medžiagų nenustatyta.')
-        st.write('**Kaip veikia atskirai?** Žemiau galite peržiūrėti žinomą šių medžiagų poveikį. Tai nėra konkrečios poros sąveikos ar suderinamumo įrodymas.')
-        st.write('**Ką svarbu žinoti?** Šiai porai papildomos sąveikos mokomojoje bazėje nenustatytos, bet tai nereiškia, kad vaistus saugu vartoti kartu.')
+        st.write('**Sąveikos duomenys:** šiai konkrečiai porai mūsų mokomojoje bazėje dokumentuotos sąveikos įrašo nėra. Tai nėra patvirtinimas, kad derinys saugus.')
 
-    # Profiliai yra pasirenkami, neapsimetame, kad bazėje jie visada egzistuoja.
-    with st.expander('ℹ️ Veikliųjų medžiagų poveikis ir duomenų ribos'):
-        if result['profiles']:
+    # Išskleidžiamą skiltį rodome tik tada, kai joje yra realios informacijos.
+    if result['profiles']:
+        with st.expander('ℹ️ Papildoma veikliųjų medžiagų informacija'):
             for name, group, desc in result['profiles']:
                 st.write('**' + name.capitalize() + ' (' + group + '):** ' + desc)
-        else:
-            st.write('Šioms medžiagoms mūsų mokomojoje bazėje papildomų veikimo profilių nėra.')
-        for label, parts in (('1 preparatas', result['a']), ('2 preparatas', result['b'])):
-            st.caption(label + ': ' + ', '.join(parts))
-        if any(any(term in x for term in BOTANICAL_TERMS) for x in result['a'] + result['b']):
-            st.caption('Augalinių medžiagų derinių sąveikų dokumentavimas ribotas; įrašo nebuvimas nepatvirtina saugumo.')
+    if any(any(term in x for term in BOTANICAL_TERMS) for x in result['a'] + result['b']):
+        st.caption('Augalinių medžiagų derinių sąveikos gali būti nepakankamai ištirtos; įrašo nebuvimas nepatvirtina saugumo.')
     st.caption('Edukacinė sudėties ir šaltinių analizė; nėra individuali medicininė rekomendacija.')
     return bool(result['records'] or result['shared'] or result['profiles'])
