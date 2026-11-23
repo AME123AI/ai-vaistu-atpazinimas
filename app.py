@@ -1957,6 +1957,50 @@ def ingredient_score(
     return best
 
 
+def forms_compatible(ocr_form, vvkt_form):
+    """Konservatyviai lygina OCR bazinę ir VVKT detalesnę formą.
+
+    Platesnis VVKT aprašymas (pvz., skrandyje neirios minkštosios kapsulės)
+    neprieštarauja OCR aptiktoms minkštosioms kapsulėms. Kapsulės ir
+    tabletės nėra ekvivalentiškos. Kai OCR aptinka specifinę savybę,
+    kurios VVKT nenurodo, automatiškai jos nepatvirtiname.
+    """
+    ocr = normalize_text(ocr_form)
+    vvkt = normalize_text(vvkt_form)
+    if not ocr or not vvkt:
+        return False
+    if ocr == vvkt:
+        return True
+
+    def category(value):
+        if "kapsul" in value:
+            if "minkst" in value:
+                return "minkstosios kapsules"
+            if "kiet" in value:
+                return "kietosios kapsules"
+            return "kapsules"
+        if "tablet" in value:
+            return "tabletes"
+        return None
+
+    ocr_category = category(ocr)
+    vvkt_category = category(vvkt)
+    if not ocr_category or ocr_category != vvkt_category:
+        return False
+
+    # Jei OCR atpažino specifinę savybę, VVKT taip pat ją turi nurodyti.
+    qualifiers = ("skrandyje neir", "plevele dengt", "modifikuot", "pailgint")
+    for qualifier in qualifiers:
+        if qualifier in ocr and qualifier not in vvkt:
+            return False
+    # Bazinės formos atitikimas: 'minkštosios kapsulės' ->
+    # 'skrandyje neirios minkštosios kapsulės' yra leidžiamas.
+    if ocr == ocr_category:
+        return True
+    # Kitos formuluotės suderinamos tik jei OCR žodžiai randami VVKT.
+    return all(token in vvkt.split() for token in ocr.split())
+
+
 def form_score(
     form,
     ocr_text
@@ -1983,6 +2027,9 @@ def form_score(
     b = normalize_text(
         detected
     )
+
+    if forms_compatible(detected, form):
+        return 1.0
 
     if a == b:
         return 1.0
@@ -2049,7 +2096,7 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
                 normalize_strength_value(x) == normalize_strength_value(strength)
                 for x in found_strengths
             )
-            form_match = bool(found_form) and normalize_text(form) == normalize_text(found_form)
+            form_match = bool(found_form) and forms_compatible(found_form, form)
             score = ns * 0.65 + ins * 0.05 + ss * 0.20 + fs * 0.10
             if found_strengths:
                 score += 0.22 if strength_match else -0.38
