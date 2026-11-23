@@ -1651,22 +1651,6 @@ def find_name_candidates(
 
                     break
 
-    # Kai OCR randa trumpą tikslų prekės ženklą (pvz. IBUPROM),
-    # įtraukiame ir jo pavadinimo tęsinius (pvz. IBUPROM EXPRESS).
-    # Tai tik kandidatų išplėtimas: OCR ir patvirtinimo logikos neliečiame.
-    # Nevartojame veikliosios medžiagos pavadinimo kaip prekės ženklo.
-    if exact_scores:
-        brand_roots = [
-            normalize_text(name)
-            for name in exact_scores
-            if len(normalize_text(name)) >= 5
-            and normalize_text(name) != normalize_text(detect_ingredient(ocr_text))
-        ]
-        for name in vvkt_names:
-            candidate_norm = normalize_text(name)
-            if any(candidate_norm.startswith(root + " ") for root in brand_roots):
-                exact_scores.setdefault(name, 0.91)
-
     # Jei turime aiškių pavadinimo atitikimų,
     # brangaus fuzzy etapo apskritai nereikia.
     if exact_scores:
@@ -2088,20 +2072,10 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
         for value in matched_rows["preparato_pav"].dropna().astype(str).tolist():
             if value not in candidate_names:
                 candidate_names.append(value)
-    # Aiškiai OCR matomo pavadinimo tęsinius laikome vieno prekės ženklo
-    # kandidatais, net jei fuzzy balas dėl nepriskaityto antro žodžio mažas.
-    explicit_brand_roots = [
-        normalize_text(name) for name in candidate_names
-        if len(normalize_text(name)) >= 5
-        and re.search(r"(?<![a-z0-9])" + re.escape(normalize_text(name)) + r"(?![a-z0-9])", normalize_text(ocr_text))
-        and normalize_text(name) != normalize_text(found_ingredient)
-    ]
     results = []
     seen = set()
     for name in candidate_names:
         ns = name_score(name, ocr_text)
-        if any(normalize_text(name).startswith(root + " ") for root in explicit_brand_roots):
-            ns = max(ns, 0.66)  # tik kandidato įtraukimui, ne tapatybės patvirtinimui
         if ns < 0.55:
             continue
         rows = get_vvkt_rows(name)
@@ -2136,28 +2110,12 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
                 "ocr_strength_match": strength_match if found_strengths else None,
                 "ocr_form_match": form_match if found_form else None,
             })
-    # Pakuotėje matomas tikslus prekės ženklas turi pirmenybę prieš
-    # kitų gamintojų vaistus su ta pačia veikliąja medžiaga.
-    # Skaičiuojame tik atskirus OCR žodžius; jokia forma / dozė nekeičiama.
-    visible_names = [
-        normalize_text(name) for name in vvkt_names
-        if len(normalize_text(name)) >= 5
-        and re.search(r"(?<![a-z0-9])" + re.escape(normalize_text(name)) + r"(?![a-z0-9])", normalize_text(ocr_text))
-        and normalize_text(name) != normalize_text(found_ingredient)
-    ]
-    # Nepasirenkame prekės ženklo, jei yra tik veikliosios medžiagos tekstas.
-    # Kelių sutampančių pavadinimų atveju teikiame pirmenybę ilgiausiam.
-    visible_names.sort(key=len, reverse=True)
-    def _brand_match(candidate):
-        text = normalize_text(candidate["name"])
-        return int(any(text == root or text.startswith(root + " ") for root in visible_names))
-
     # Kai OCR nustatė stiprumą / formą, neprieštaraujantis variantas turi pirmenybę.
     # Kitus variantus paliekame pasirinkimui tik jei nepakanka suderintų kandidatų.
     results.sort(key=lambda r: (
         1 if r["ocr_strength_match"] is True else (0 if r["ocr_strength_match"] is None else -1),
         1 if r["ocr_form_match"] is True else (0 if r["ocr_form_match"] is None else -1),
-        _brand_match(r), r["score"], r["name_score"]
+        r["score"], r["name_score"]
     ), reverse=True)
     return results[:top_n]
 
