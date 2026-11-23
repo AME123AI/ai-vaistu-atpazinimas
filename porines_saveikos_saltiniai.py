@@ -129,8 +129,18 @@ def show_pair_result(first,second):
         st.warning('Nepakanka informacijos apie vieno ar abiejų preparatų veikliąsias medžiagas.')
         return False
     if result['shared']:
-        st.warning('⚠️ **Kartojasi veiklioji medžiaga:** '+', '.join(result['shared'])+'. Dviejų preparatų vartojimas gali lemti tos pačios medžiagos dozės sumavimą.')
-        st.caption('Faktinei perdozavimo rizikai įvertinti reikia žinoti vartojamą kiekį, dažnį ir konkrečių preparatų dozavimo rekomendacijas.')
+        st.markdown('#### 🔎 Kaip šie vaistai veikia kartu?')
+        ambroxol_duplicate = any('ambroksol' in x or 'ambroxol' in x for x in result['shared'])
+        if ambroxol_duplicate:
+            st.write('**Abu preparatai veikia tuo pačiu būdu:** jų veiklioji medžiaga ambroksolis padeda skystinti kvėpavimo takų sekretą ir palengvina atsikosėjimą. Jie neturi dviejų skirtingų, vienas kitą papildančių veikimo mechanizmų.')
+            st.write('**Vartojant kartu:** abiejų preparatų ambroksolio kiekiai susideda. Vien tik dviejų skirtingų pavadinimų vartojimas nereiškia stipresnio ar geresnio gydomojo poveikio.')
+            st.write('**Ką svarbu žinoti:** reikėtų vengti netyčinio tos pačios veikliosios medžiagos dubliavimo; dozės tinkamumas priklauso nuo vartojimo dažnio, amžiaus ir preparatų instrukcijų.')
+            st.markdown('[Ambroksolio 30 mg tablečių informacija (VVKT)](https://vapris.vvkt.lt/vvkt-web/public/medications/view/25558)')
+        else:
+            st.write('**Abu preparatai turi tą pačią veikliąją medžiagą:** '+', '.join(result['shared'])+'. Tai reiškia, kad veikimo mechanizmas dubliuojasi, o abiejų preparatų suvartotos šios medžiagos dozės susideda.')
+            st.write('**Galima pasekmė:** netyčia suvartojamas didesnis veikliosios medžiagos kiekis. Tai nereiškia, kad jau įvyko perdozavimas – reikia patikrinti vartojamą kiekį ir instrukcijas.')
+        st.warning('⚠️ **Pasikartoja veiklioji medžiaga:** '+', '.join(result['shared'])+'. Prieš derinant patikrinkite bendrą tos medžiagos dozę su vaistininku ar gydytoju.')
+        st.caption('Ši išvada pagrįsta dubliuojama sudėtimi, o ne papildoma skirtingų veikliųjų medžiagų tarpusavio sąveika.')
     if result['records']:
         st.caption(f'Rasta {len(result["records"])} sąveikų / grupės atsargumo taisyklių pagal pasirinktų preparatų sudėtį.')
         for r in result['records'][:12]:
