@@ -3078,7 +3078,7 @@ st.divider()
 
 st.markdown(
     '<div class="step">'
-    '🔬 5. Kaip šie vaistai veikia kartu'
+    '🔬 5. Vaistų derinio analizė'
     '</div>',
     unsafe_allow_html=True
 )
@@ -3180,123 +3180,12 @@ if st.button(
                 st.write("**Farmacinė forma:**", clean_value(second_row.get("farmacine_forma_lt")))
 
         # =================================================
-        # KAIP VEIKIA KARTU
+        # SĄVEIKOS REZULTATAS
         # =================================================
-
-        st.markdown(
-            "## 🔬 KAIP ŠIE VAISTAI VEIKIA KARTU"
-        )
-
-        # Senojo profilio trūkumo nekartojame, kai rodomas VAPRIS
-        # šaltinis; tai nėra įrodymas, kad vaistų pora saugi.
-        with st.expander("ℹ️ Atskirų veikliųjų medžiagų farmakologinė informacija"):
-            known_1 = show_ingredient_explanation(
-                first,
-                ingredient_1,
-                suppress_missing=True
-            )
-
-            known_2 = show_ingredient_explanation(
-                second,
-                ingredient_2,
-                suppress_missing=True
-            )
-
+        # Sąveikos modulio rezultatas yra vienintelis šio skyriaus
+        # aiškinimas. Atskirų nepatikrintų PCS tekstų ir tuščių
+        # farmakologinių profilių čia nebedubliuojame.
         show_pair_result(ingredient_1, ingredient_2)
-
-        info_1 = get_ingredient_knowledge(
-            ingredient_1
-        )
-
-        info_2 = get_ingredient_knowledge(
-            ingredient_2
-        )
-
-        # Bandomojo CSV tekstai rodomi atskirai nuo porinės išvados.
-        with st.expander("📄 VAPRIS 4.5 sąveikų informacija (TESTINĖ)"):
-            st.info("Toliau pateikiami atskirų preparatų dokumentų tekstai. "
-                    "Tai nėra automatinis šių dviejų vaistų suderinamumo "
-                    "patvirtinimas. Prieš klinikinį naudojimą būtina "
-                    "patikrinti originalų PCS ir preparato tapatybę.")
-            show_test_document_interactions(first)
-            st.divider()
-            show_test_document_interactions(second)
-
-        # Nepatikrintos grupinės taisyklės nėra konkrečios poros išvada.
-        # V5 automatiniai įrašai į šį klinikinės išvados kelią nejungiami.
-        st.caption("Medicininė išvada neteikiama be konkrečios poros patikrintų šaltinių.")
-        # =================================================
-        # VARTOJIMO BŪDAS
-        # =================================================
-
-        st.markdown(
-            "### 💉 Vartojimo būdas"
-        )
-
-        if first_row is not None:
-
-            st.write(
-                f"**{first}:**",
-                clean_value(
-                    first_row.get(
-                        "vartojimo_budas"
-                    )
-                )
-            )
-
-        if second_row is not None:
-
-            st.write(
-                f"**{second}:**",
-                clean_value(
-                    second_row.get(
-                        "vartojimo_budas"
-                    )
-                )
-            )
-
-        # =================================================
-        # FARMAKOLOGINIŲ PROFILIŲ ŠALTINIAI
-        # =================================================
-
-        st.markdown(
-            "### 📚 Farmakologinių profilių šaltiniai"
-        )
-
-        shown_sources = set()
-
-        for info in [
-            info_1,
-            info_2
-        ]:
-
-            if info is None:
-                continue
-
-            source = clean_value(
-                info.get("source")
-            )
-
-            if (
-                source != "—"
-                and source not in shown_sources
-            ):
-
-                st.write(
-                    f"• {source}"
-                )
-
-                shown_sources.add(
-                    source
-                )
-
-        st.caption(
-            "Preparatų pavadinimai, veikliosios "
-            "medžiagos, stiprumas, farmacinė forma "
-            "ir vartojimo būdas gaunami iš projekte "
-            "esančio VVKT duomenų rinkinio."
-        )
-
 
 # =========================================================
 # APIE SISTEMĄ
