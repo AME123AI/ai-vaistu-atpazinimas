@@ -1,5 +1,6 @@
 from demo_risk_rules import analyze as analyze_demo_risk
 from demo_saveikos import find_demo_pair
+from porines_saveikos_saltiniai import show_pair_result
 from pathlib import Path
 import json
 import re
@@ -3208,16 +3209,7 @@ if st.button(
                 suppress_missing=True
             )
 
-        st.markdown("### 🧩 Dviejų vaistų sąveika")
-        demo_pair = find_demo_pair(ingredient_1, ingredient_2)
-        if demo_pair is not None:
-            st.warning("**Rastas mokomasis sąveikos įrašas – nepatvirtintas klinikiniam naudojimui.**")
-            st.markdown(f"**Aprašoma galima rizika:** {demo_pair['galima_saveika']}")
-            st.write(demo_pair["paaiskinimas"])
-            st.caption("Šis poros įrašas dar nepatikrintas pagal konkrečių preparatų PCS, dozes ir vartojimo būdus.")
-        else:
-            st.warning("**Šios poros sąveikai įvertinti nepakanka patikrintų duomenų.**")
-        st.info("**Ką daryti:** prieš vartodami šiuos vaistus kartu pasitarkite su gydytoju arba vaistininku. Nerastas įrašas nereiškia, kad derinys saugus.")
+        show_pair_result(ingredient_1, ingredient_2)
 
         info_1 = get_ingredient_knowledge(
             ingredient_1
