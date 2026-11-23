@@ -2610,7 +2610,7 @@ st.divider()
 
 st.markdown(
     '<div class="step">'
-    '✅ 3. Patvirtintas rezultatas'
+    '✅ 3. Patvirtintas pirmas rezultatas'
     '</div>',
     unsafe_allow_html=True
 )
@@ -3004,6 +3004,19 @@ if second_query:
             )
 
 
+# =========================================================
+# 5. PATVIRTINTAS ANTRAS REZULTATAS
+# =========================================================
+
+st.divider()
+
+st.markdown(
+    '<div class="step">'
+    '✅ 5. Patvirtintas antras rezultatas'
+    '</div>',
+    unsafe_allow_html=True
+)
+
 # Patvirtintas antras preparatas.
 second = st.session_state.get(
     "second_vvkt_drug"
@@ -3020,6 +3033,8 @@ if second:
         show_selected_vvkt_info(chosen)
     else:
         show_vvkt_info(second)
+else:
+    st.info("Dar nepatvirtintas antrasis preparatas.")
 
 
 # Demonstracinis perspėjimas automatiškai perskaičiuojamas keičiant pasirinkimą.
@@ -3037,7 +3052,7 @@ def _demo_info(name, quantity, chosen=None):
     return result
 
 if first and second:
-    st.markdown("### 🛡️ Vaistų derinio patikra")
+    st.markdown("### 🛡️ 6. Vaistų derinio patikra")
     st.caption("Patikra skirta universiteto demonstracijai, ne medicininiam suderinamumui nustatyti.")
     q1, q2 = st.columns(2)
     with q1:
@@ -3071,14 +3086,14 @@ if first and second:
 
 
 # =========================================================
-# 5. FARMAKOLOGINĖ ANALIZĖ
+# 7. FARMAKOLOGINĖ ANALIZĖ
 # =========================================================
 
 st.divider()
 
 st.markdown(
     '<div class="step">'
-    '🔬 5. Vaistų derinio analizė'
+    '🔬 7. Vaistų derinio analizė'
     '</div>',
     unsafe_allow_html=True
 )
