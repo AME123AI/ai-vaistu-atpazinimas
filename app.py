@@ -2052,6 +2052,41 @@ def form_score(
 # VVKT KANDIDATŲ REITINGAVIMAS – PATOBULINTA VERSIJA
 # =========================================================
 
+def brand_evidence(name, ocr_text):
+    """Prekės ženklo įrodymas iš OCR, ne iš veikliosios medžiagos.
+
+    3: visas kelių žodžių pavadinimas; 2: vieno žodžio visas pavadinimas;
+    1: matomas pirmas kelių žodžių pavadinimo žodis; 0: nerasta.
+    Trumpesnio pavadinimo nelaikome pilnu, kai OCR aiškiai rodo
+    to paties ženklo ilgesnį variantą, pvz. IBUPROM EXPRESS.
+    """
+    name_n = normalize_text(name)
+    text_n = normalize_text(ocr_text)
+    if not name_n or not text_n:
+        return 0
+    words = name_n.split()
+    full = re.search(r"(?<![a-z0-9])" + re.escape(name_n) + r"(?![a-z0-9])", text_n)
+    if full:
+        if len(words) > 1:
+            return 3
+        # Jei nuotraukoje po vieno žodžio yra tikslus kito VVKT
+        # varianto antrasis žodis, vieno žodžio įrašas nėra prioritetinis.
+        trailing = text_n[full.end():].lstrip()
+        expanded = vvkt_names if "vvkt_names" in globals() else ()
+        for candidate in expanded:
+            other = normalize_text(candidate).split()
+            if (len(other) > 1 and other[0] == name_n
+                    and re.match(re.escape(other[1]) + r"(?![a-z0-9])", trailing)):
+                return 1
+        return 2
+    first_word = words[0]
+    if len(words) > 1 and len(first_word) >= 5 and re.search(
+        r"(?<![a-z0-9])" + re.escape(first_word) + r"(?![a-z0-9])", text_n
+    ):
+        return 1
+    return 0
+
+
 def rank_vvkt_candidates(ocr_text, top_n=5):
     """Kandidatai vertinami pakuotės stiprumo ir formos kontekste.
 
@@ -2089,6 +2124,7 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
                 continue
             seen.add(identity)
             ins = ingredient_score(ingredient, ocr_text)
+            brand_signal = brand_evidence(name, ocr_text)
             ss = strength_score(strength, ocr_text)
             fs = form_score(form, ocr_text)
             # Griežtas skaitinio stiprumo sutapimas, kai OCR jį aptiko.
@@ -2098,6 +2134,10 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
             )
             form_match = bool(found_form) and forms_compatible(found_form, form)
             score = ns * 0.65 + ins * 0.05 + ss * 0.20 + fs * 0.10
+            # Bendras veikliosios medžiagos, stiprumo ar formos sutapimas
+            # nėra įrodymas, kad prekės ženklas teisingas.
+            if brand_signal:
+                score += 0.12
             if found_strengths:
                 score += 0.22 if strength_match else -0.38
             if found_form:
@@ -2109,10 +2149,12 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
                 "strength_score": ss, "form_score": fs,
                 "ocr_strength_match": strength_match if found_strengths else None,
                 "ocr_form_match": form_match if found_form else None,
+                "brand_evidence": brand_signal,
             })
     # Kai OCR nustatė stiprumą / formą, neprieštaraujantis variantas turi pirmenybę.
     # Kitus variantus paliekame pasirinkimui tik jei nepakanka suderintų kandidatų.
     results.sort(key=lambda r: (
+        r["brand_evidence"],
         1 if r["ocr_strength_match"] is True else (0 if r["ocr_strength_match"] is None else -1),
         1 if r["ocr_form_match"] is True else (0 if r["ocr_form_match"] is None else -1),
         r["score"], r["name_score"]
@@ -2259,6 +2301,7 @@ if uploaded:
                 fast_is_strong = (
                     top_fast["name_score"] >= 0.90
                     and top_fast["score"] >= 0.75
+                    and top_fast.get("brand_evidence", 0) > 0
                 )
 
             # =============================================
@@ -2477,10 +2520,13 @@ if uploaded:
         )
         if first_ocr_mismatch:
             st.error("Pasirinkto VVKT varianto stiprumas arba farmacinė forma nesutampa su OCR. Pasirinkite atitinkantį variantą arba naudokite rankinę paiešką. OCR taip pat gali suklysti.")
+        first_brand_missing = candidate.get("brand_evidence", 0) == 0
+        if first_brand_missing:
+            st.warning("Nuotraukos OCR nepatvirtino šio preparato prekės ženklo. Vien veikliosios medžiagos, stiprumo ir formos sutapimo nepakanka. Patikrinkite pavadinimą ant pakuotės ir pasirinkite preparatą rankine paieška.")
         if st.button(
             "✅ Patvirtinti preparatą",
             type="primary",
-            disabled=first_ocr_mismatch
+            disabled=first_ocr_mismatch or first_brand_missing
         ):
 
             st.session_state[
@@ -2705,6 +2751,7 @@ if second_uploaded:
                 second_fast_is_strong = (
                     second_top_fast["name_score"] >= 0.90
                     and second_top_fast["score"] >= 0.75
+                    and second_top_fast.get("brand_evidence", 0) > 0
                 )
 
             if second_fast_is_strong:
@@ -2927,10 +2974,13 @@ if second_uploaded:
         )
         if second_ocr_mismatch:
             st.error("Pasirinkto VVKT varianto stiprumas arba farmacinė forma nesutampa su OCR. Pasirinkite atitinkantį variantą arba naudokite rankinę paiešką. OCR taip pat gali suklysti.")
+        second_brand_missing = second_candidate.get("brand_evidence", 0) == 0
+        if second_brand_missing:
+            st.warning("OCR nepatvirtino antrosios pakuotės prekės ženklo. Vien veikliosios medžiagos, stiprumo ir formos sutapimo nepakanka. Patikrinkite pavadinimą ant pakuotės ir naudokite rankinę paiešką.")
         if st.button(
             "✅ Patvirtinti antrą preparatą",
             type="primary",
-            disabled=second_ocr_mismatch
+            disabled=second_ocr_mismatch or second_brand_missing
         ):
 
             st.session_state[
