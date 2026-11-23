@@ -2522,11 +2522,19 @@ if uploaded:
             st.error("Pasirinkto VVKT varianto stiprumas arba farmacinė forma nesutampa su OCR. Pasirinkite atitinkantį variantą arba naudokite rankinę paiešką. OCR taip pat gali suklysti.")
         first_brand_missing = candidate.get("brand_evidence", 0) == 0
         if first_brand_missing:
-            st.warning("Nuotraukos OCR nepatvirtino šio preparato prekės ženklo. Vien veikliosios medžiagos, stiprumo ir formos sutapimo nepakanka. Patikrinkite pavadinimą ant pakuotės ir pasirinkite preparatą rankine paieška.")
+            st.warning("OCR nepakankamai aiškiai perskaitė šio preparato prekės ženklą. Patikrinkite, ar pasirinktas VVKT pavadinimas tiksliai sutampa su pakuote.")
+            first_name_checked = st.checkbox(
+                "Patikrinau ant pakuotės esantį pavadinimą ir patvirtinu pasirinktą preparatą",
+                key="first_brand_manual_check_" + hashlib.sha256(
+                    (str(st.session_state.get("ocr_image_key", "")) + repr(candidate)).encode("utf-8")
+                ).hexdigest()[:16],
+            )
+        else:
+            first_name_checked = True
         if st.button(
             "✅ Patvirtinti preparatą",
             type="primary",
-            disabled=first_ocr_mismatch or first_brand_missing
+            disabled=first_ocr_mismatch or not first_name_checked
         ):
 
             st.session_state[
@@ -2976,11 +2984,19 @@ if second_uploaded:
             st.error("Pasirinkto VVKT varianto stiprumas arba farmacinė forma nesutampa su OCR. Pasirinkite atitinkantį variantą arba naudokite rankinę paiešką. OCR taip pat gali suklysti.")
         second_brand_missing = second_candidate.get("brand_evidence", 0) == 0
         if second_brand_missing:
-            st.warning("OCR nepatvirtino antrosios pakuotės prekės ženklo. Vien veikliosios medžiagos, stiprumo ir formos sutapimo nepakanka. Patikrinkite pavadinimą ant pakuotės ir naudokite rankinę paiešką.")
+            st.warning("OCR nepakankamai aiškiai perskaitė antrosios pakuotės prekės ženklą. Patikrinkite, ar pasirinktas VVKT pavadinimas tiksliai sutampa su pakuote.")
+            second_name_checked = st.checkbox(
+                "Patikrinau ant antros pakuotės esantį pavadinimą ir patvirtinu pasirinktą preparatą",
+                key="second_brand_manual_check_" + hashlib.sha256(
+                    (str(st.session_state.get("second_ocr_image_key", "")) + repr(second_candidate)).encode("utf-8")
+                ).hexdigest()[:16],
+            )
+        else:
+            second_name_checked = True
         if st.button(
             "✅ Patvirtinti antrą preparatą",
             type="primary",
-            disabled=second_ocr_mismatch or second_brand_missing
+            disabled=second_ocr_mismatch or not second_name_checked
         ):
 
             st.session_state[
