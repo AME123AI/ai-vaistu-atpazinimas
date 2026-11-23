@@ -2616,7 +2616,7 @@ st.divider()
 
 st.markdown(
     '<div class="step">'
-    '✅ 3. Patvirtinkite rezultatą'
+    '✅ 3. Patvirtintas rezultatas'
     '</div>',
     unsafe_allow_html=True
 )
@@ -2628,7 +2628,7 @@ first = st.session_state.get(
 if first:
 
     st.success(
-        f"💊 {first}"
+        f"💊 Patvirtintas pirmas preparatas: {first}"
     )
 
     chosen = st.session_state.get("first_vvkt_selected")
