@@ -960,6 +960,51 @@ def run_ocr(image):
     Pagal nutylėjimą atliekamas greitas OCR.
     """
     return run_fast_ocr(image)
+def retry_incomplete_ocr(image, ocr_text, ranked_candidates, engine):
+    """Only retry poorly recognized boxes; never infer a drug from VVKT alone.
+
+    Reuses the existing Tesseract fallback and reranks against literal OCR text.
+    An added OCR pass must improve the observed name/strength evidence.
+    """
+    first = ranked_candidates[0] if ranked_candidates else None
+    clear_name = bool(first and first.get("name_score", 0) >= 0.90)
+    has_strength = bool(extract_strengths(ocr_text))
+    # Do not spend additional OCR time on already sufficiently recognized images.
+    if clear_name and has_strength:
+        return ocr_text, ranked_candidates, engine
+
+    # The fallback is intentionally only run for low-evidence cases. The
+    # expensive PaddleOCR has already been tried by the calling flow.
+    fallback_text = run_fallback_ocr(image)
+    if not fallback_text.strip():
+        return ocr_text, ranked_candidates, engine
+
+    # Retain all previously read text; only add new recognized material.
+    fresh_lines = [line.strip() for line in fallback_text.splitlines()
+                   if line.strip() and line.strip() not in ocr_text.splitlines()]
+    if not fresh_lines:
+        return ocr_text, ranked_candidates, engine
+    merged = "\n".join(filter(None, (ocr_text, "\n".join(fresh_lines))))
+    retried = rank_vvkt_candidates(merged, top_n=5)
+    if not retried:
+        return ocr_text, ranked_candidates, engine
+
+    new_top = retried[0]
+    if new_top.get("name_score", 0) < 0.68:
+        return ocr_text, ranked_candidates, engine
+
+    # If original name was reliable, do not swap it for a different name
+    # simply because extra OCR noise found a coincidental match.
+    if clear_name and normalize_text(new_top.get("name")) != normalize_text(first.get("name")):
+        return ocr_text, ranked_candidates, engine
+
+    better_name = not first or new_top.get("name_score", 0) > first.get("name_score", 0)
+    better_strength = not has_strength and bool(extract_strengths(merged))
+    if not (better_name or better_strength):
+        return ocr_text, ranked_candidates, engine
+    return merged, retried, engine + " + papildomas Tesseract"
+
+
 # =========================================================
 # OCR – STIPRUMO ATPAŽINIMAS
 # =========================================================
@@ -2261,6 +2306,7 @@ if uploaded:
                 fast_is_strong = (
                     top_fast["name_score"] >= 0.90
                     and top_fast["score"] >= 0.75
+                    and bool(extract_strengths(fast_ocr_text))
                 )
 
             # =============================================
@@ -2310,6 +2356,11 @@ if uploaded:
                     ocr_engine = "Tesseract + PaddleOCR"
                 else:
                     ocr_engine = "Tesseract"
+
+            # 3 etapas tik nepilnam OCR: papildomas Tesseract
+            ocr_text, ranked_candidates, ocr_engine = retry_incomplete_ocr(
+                image, ocr_text, ranked_candidates, ocr_engine
+            )
 
         # =============================================
         # IŠSAUGOME ŠIOS NUOTRAUKOS REZULTATĄ
@@ -2707,6 +2758,7 @@ if second_uploaded:
                 second_fast_is_strong = (
                     second_top_fast["name_score"] >= 0.90
                     and second_top_fast["score"] >= 0.75
+                    and bool(extract_strengths(second_fast_text))
                 )
 
             if second_fast_is_strong:
@@ -2757,6 +2809,11 @@ if second_uploaded:
                     )
                 else:
                     second_ocr_engine = "Tesseract"
+
+            # Ta pati atsarginė patikra ir antrajai pakuotei.
+            second_ocr_text, second_ranked_candidates, second_ocr_engine = retry_incomplete_ocr(
+                second_image, second_ocr_text, second_ranked_candidates, second_ocr_engine
+            )
 
         # Išsaugome tik antro vaisto OCR rezultatą.
         st.session_state[
