@@ -965,36 +965,24 @@ def run_ocr(image):
 # =========================================================
 
 def extract_strengths(text):
+    """Atpažįsta mg/ml koncentracijas, neįtraukiant pakuotės tūrio į stiprumus.
 
-    normalized = normalize_text(
-        text
+    Funkcija nekuria /ml, jeigu OCR šio santykio neperskaitė.
+    """
+    normalized = normalize_text(text).replace(",", ".")
+    # Koncentracijų alternatyva PRIVALO būti prieš paprastą mg alternatyvą.
+    pattern = (
+        r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|ug|g)"
+        r"\s*/\s*(?:\d+(?:\.\d+)?\s*)?ml\b"
+        r"|\b\d+(?:\.\d+)?\s*(?:mg|mcg|ug|g)\b"
     )
-
-    matches = re.findall(
-        r"\b\d+(?:[.,]\d+)?\s*"
-        r"(?:mg|mcg|ug|g|ml)\b",
-        normalized
-    )
-
-    results = []
-
-    for item in matches:
-
-        item = item.replace(
-            ",",
-            "."
-        )
-
-        item = re.sub(
-            r"\s+",
-            " ",
-            item
-        )
-
-        if item not in results:
-            results.append(item)
-
-    return results
+    found = []
+    for item in re.findall(pattern, normalized):
+        item = re.sub(r"\s*/\s*", "/", item)
+        item = re.sub(r"\s+", " ", item).strip()
+        if item not in found:
+            found.append(item)
+    return found
 
 
 # =========================================================
@@ -1006,6 +994,11 @@ def detect_form(text):
     t = normalize_text(
         text
     )
+
+    # Geriamoji suspensija nėra geriamasis tirpalas.
+    # Formą nustatome tik iš OCR perskaityto teksto.
+    if "suspensij" in t and "geriam" in t:
+        return "geriamoji suspensija"
 
     rules = [
 
