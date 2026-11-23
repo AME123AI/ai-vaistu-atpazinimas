@@ -121,59 +121,85 @@ def find_documented_pairs(first,second,data_path=None):
     return evaluate_pair(first,second,data_path)['records']
 
 
-def show_pair_result(first,second):
-    import streamlit as st
-    result=evaluate_pair(first,second)
-    st.markdown('### 🧩 Dviejų vaistų sąveikos ir sudėties analizė')
-    if result['type']=='missing':
-        st.warning('Nepakanka informacijos apie vieno ar abiejų preparatų veikliąsias medžiagas.')
-        return False
-    if result['shared']:
-        st.markdown('#### 🔎 Kaip šie vaistai veikia kartu?')
-        ambroxol_duplicate = any('ambroksol' in x or 'ambroxol' in x for x in result['shared'])
-        if ambroxol_duplicate:
-            st.write('**Abu preparatai veikia tuo pačiu būdu:** jų veiklioji medžiaga ambroksolis padeda skystinti kvėpavimo takų sekretą ir palengvina atsikosėjimą. Jie neturi dviejų skirtingų, vienas kitą papildančių veikimo mechanizmų.')
-            st.write('**Vartojant kartu:** abiejų preparatų ambroksolio kiekiai susideda. Vien tik dviejų skirtingų pavadinimų vartojimas nereiškia stipresnio ar geresnio gydomojo poveikio.')
-            st.write('**Ką svarbu žinoti:** reikėtų vengti netyčinio tos pačios veikliosios medžiagos dubliavimo; dozės tinkamumas priklauso nuo vartojimo dažnio, amžiaus ir preparatų instrukcijų.')
-            st.markdown('[Ambroksolio 30 mg tablečių informacija (VVKT)](https://vapris.vvkt.lt/vvkt-web/public/medications/view/25558)')
-        else:
-            st.write('**Abu preparatai turi tą pačią veikliąją medžiagą:** '+', '.join(result['shared'])+'. Tai reiškia, kad veikimo mechanizmas dubliuojasi, o abiejų preparatų suvartotos šios medžiagos dozės susideda.')
-            st.write('**Galima pasekmė:** netyčia suvartojamas didesnis veikliosios medžiagos kiekis. Tai nereiškia, kad jau įvyko perdozavimas – reikia patikrinti vartojamą kiekį ir instrukcijas.')
-        st.warning('⚠️ **Pasikartoja veiklioji medžiaga:** '+', '.join(result['shared'])+'. Prieš derinant patikrinkite bendrą tos medžiagos dozę su vaistininku ar gydytoju.')
-        st.caption('Ši išvada pagrįsta dubliuojama sudėtimi, o ne papildoma skirtingų veikliųjų medžiagų tarpusavio sąveika.')
-    if result['records']:
-        st.caption(f'Rasta {len(result["records"])} sąveikų / grupės atsargumo taisyklių pagal pasirinktų preparatų sudėtį.')
-        for r in result['records'][:12]:
-            category=r.get('kategorija','Reikia atsargumo')
-            lev=r.get('pagrindimo_lygis','konkreti_pora')
-            heading=f'**{r.get("veiklioji_1")} + {r.get("veiklioji_2")}** — {category}'
-            if 'Paprastai galima' in category:
-                st.success('✅ '+heading)
-            elif 'Kontraindikuot' in category or 'Nevartoti' in category:
-                st.error('⛔ '+heading)
-            else:
-                st.warning('⚠️ '+heading)
-            st.write('**Kas žinoma:**',r.get('saveika',''))
-            st.write('**Kodėl / kokia rizika:**',r.get('mechanizmas',''))
-            st.write('**Į ką atkreipti dėmesį:**',r.get('salygos',''))
-            if lev=='farmakologines_grupes_taisykle':
-                st.caption('Tai farmakologinės grupės atsargumo taisyklė, o ne individualiai patvirtinta preparatų poros sąveika.')
-            url=r.get('saltinis_url','')
-            if url.startswith('https://'):
-                st.markdown('**Viešas šaltinis:** [skaityti]('+url+')')
-        if len(result['records'])>12:
-            st.caption('Rodomi pirmieji 12 radinių; visus duomenis galima peržiūrėti CSV faile.')
+def explain_pair(first, second, data_path=None):
+    """Duomenų pagrindu gautas rezultatas, nenaudojantis Streamlit."""
+    result = evaluate_pair(first, second, data_path)
+    if result['type'] == 'missing':
+        status = 'truksta_sudeties'
+        summary = 'Nepavyko nustatyti vieno ar abiejų preparatų sudėties.'
+    elif result['shared']:
+        status = 'dubliavimas'
+        summary = 'Abiejuose preparatuose kartojasi ta pati veiklioji medžiaga.'
+    elif result['records']:
+        status = 'zinoma_saveika'
+        summary = 'Pagal veikliųjų medžiagų porą rasta sąveikos informacija.'
     else:
-        st.info('**Konkretaus šių vaistų derinio sąveikos mūsų bazėje neaprašyta.** Žemiau pateikiama sudėties analizė, bet tai nėra įrodymas, kad derinys saugus.')
-    with st.expander('🔬 Ką daro atpažintos veikliosios medžiagos?', expanded=not bool(result['records'])):
-        if result['profiles']:
-            for name,group,desc in result['profiles']:
-                st.write(f'**{name.capitalize()} — {group}.** {desc}')
+        status = 'sudeties_apzvalga'
+        summary = 'Vienodų veikliųjų medžiagų nenustatyta; kitų sąveikų ši automatinė patikra neatmeta.'
+    return dict(result, status=status, summary=summary)
+
+
+def show_pair_result(first, second):
+    """Trumpas mokomasis poros rezultatas; medikamentų atpažinimo nekeičia."""
+    import streamlit as st
+    result = explain_pair(first, second)
+    st.markdown('### 🧩 Kaip šie vaistai veikia kartu?')
+
+    if result['status'] == 'truksta_sudeties':
+        st.warning('Nepakanka sudėties duomenų abiem vaistams palyginti.')
+        return False
+
+    if result['shared']:
+        shared = ', '.join(result['shared'])
+        st.warning('⚠️ **Kartojasi veiklioji medžiaga:** ' + shared)
+        if any('ambroksol' in x or 'ambroxol' in x for x in result['shared']):
+            st.write('**Bendras poveikis.** Abu preparatai turi ambroksolio, kuris padeda skystinti kvėpavimo takų sekretą ir palengvina atsikosėjimą. Tai tas pats, o ne du vienas kitą papildantys veikimo mechanizmai.')
         else:
-            st.write('Šių medžiagų farmakologinių profilių mokomojoje bazėje kol kas nėra.')
-        for src,parts in (('Pirmasis preparatas',result['a']),('Antrasis preparatas',result['b'])):
-            st.caption(src+': '+', '.join(parts))
-        if any(any(term in x for term in BOTANICAL_TERMS) for x in result['a']+result['b']):
-            st.info('Viename preparate yra augalinių medžiagų. Duomenų apie augalinių preparatų sąveikas dažnai mažiau; jų nebuvimas šioje bazėje nėra saugumo patvirtinimas.')
-    st.caption('Mokomasis AI prototipas. Sąveikos pateikiamos pagal viešų šaltinių ištraukas arba atskirai pažymėtas grupių taisykles. Be paciento duomenų negalima teigti, kad konkretų derinį saugu vartoti.')
+            st.write('**Bendras poveikis.** Abu preparatai turi tą pačią veikliąją medžiagą, todėl jų poveikis dubliuojasi.')
+        st.write('**Kas vyksta vartojant kartu?** Suvartoti tos pačios veikliosios medžiagos kiekiai susideda. Vien tik skirtingi preparatų pavadinimai nereiškia papildomos naudos.')
+        st.write('**Į ką atkreipti dėmesį?** Tikrinti bendrą dozę ir vartojimo dažnį. Vien dubliavimas dar neįrodo perdozavimo, tačiau gali padidinti jo tikimybę.')
+        st.caption('Rezultatas nustatytas iš sudėties, ne iš individualiai patvirtintos klinikinės išvados.')
+
+    if result['records']:
+        st.markdown('**Žinomos sąveikos ir atsargumo sąlygos**')
+        for r in result['records'][:8]:
+            category = r.get('kategorija', 'Reikia atsargumo')
+            level = r.get('pagrindimo_lygis', 'konkreti_pora')
+            pair = str(r.get('veiklioji_1', '')) + ' + ' + str(r.get('veiklioji_2', ''))
+            if 'Paprastai galima' in category:
+                st.success('✅ **' + pair + ': ' + category + '**')
+            elif 'Kontraindikuot' in category or 'Nevartoti' in category:
+                st.error('⛔ **' + pair + ': ' + category + '**')
+            else:
+                st.warning('⚠️ **' + pair + ': ' + category + '**')
+            if r.get('saveika'):
+                st.write('**Kas žinoma:** ' + str(r['saveika']))
+            if r.get('mechanizmas'):
+                st.write('**Kodėl:** ' + str(r['mechanizmas']))
+            if r.get('salygos'):
+                st.write('**Svarbios sąlygos:** ' + str(r['salygos']))
+            if level == 'farmakologines_grupes_taisykle':
+                st.caption('Tai bendroji farmakologinės grupės taisyklė; konkrečios poros klinikinė rizika individualiai nepatvirtinta.')
+            url = str(r.get('saltinis_url', '')).strip()
+            if url.startswith('https://'):
+                st.markdown('[Peržiūrėti informacijos šaltinį](' + url + ')')
+        if len(result['records']) > 8:
+            st.caption('Rodomi 8 aktualiausi įrašai iš mokomosios duomenų bazės.')
+    elif not result['shared']:
+        st.info('**Sudėties palyginimas:** tų pačių veikliųjų medžiagų nenustatyta.')
+        st.write('**Kaip veikia atskirai?** Žemiau galite peržiūrėti žinomą šių medžiagų poveikį. Tai nėra konkrečios poros sąveikos ar suderinamumo įrodymas.')
+        st.write('**Ką svarbu žinoti?** Šiai porai papildomos sąveikos mokomojoje bazėje nenustatytos, bet tai nereiškia, kad vaistus saugu vartoti kartu.')
+
+    # Profiliai yra pasirenkami, neapsimetame, kad bazėje jie visada egzistuoja.
+    with st.expander('ℹ️ Veikliųjų medžiagų poveikis ir duomenų ribos'):
+        if result['profiles']:
+            for name, group, desc in result['profiles']:
+                st.write('**' + name.capitalize() + ' (' + group + '):** ' + desc)
+        else:
+            st.write('Šioms medžiagoms mūsų mokomojoje bazėje papildomų veikimo profilių nėra.')
+        for label, parts in (('1 preparatas', result['a']), ('2 preparatas', result['b'])):
+            st.caption(label + ': ' + ', '.join(parts))
+        if any(any(term in x for term in BOTANICAL_TERMS) for x in result['a'] + result['b']):
+            st.caption('Augalinių medžiagų derinių sąveikų dokumentavimas ribotas; įrašo nebuvimas nepatvirtina saugumo.')
+    st.caption('Edukacinė sudėties ir šaltinių analizė; nėra individuali medicininė rekomendacija.')
     return bool(result['records'] or result['shared'] or result['profiles'])
