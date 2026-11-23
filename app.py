@@ -3043,37 +3043,34 @@ def _demo_info(name, quantity, chosen=None):
     return result
 
 if first and second:
-    st.markdown("### 🛡️ Vaistų derinio patikra")
-    st.caption("Patikra skirta universiteto demonstracijai, ne medicininiam suderinamumui nustatyti.")
-    q1, q2 = st.columns(2)
-    with q1:
-        first_qty = st.number_input(f"{first}: vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_first")
-    with q2:
-        second_qty = st.number_input(f"{second}: vienetų kiekis", min_value=1, max_value=100, value=1, step=1, key="demo_qty_second")
-    demo_items = [_demo_info(first, int(first_qty), st.session_state.get("first_vvkt_selected")), _demo_info(second, int(second_qty), st.session_state.get("second_vvkt_selected"))]
-    demo_warnings, demo_notes, demo_components = analyze_demo_risk(demo_items)
-    st.markdown("**Atpažintos veikliosios medžiagos**")
-    for comp in demo_components:
-        mg_text = f"{comp['mg']:g} mg" if comp['mg'] is not None else "kiekis neapskaičiuotas"
-        st.write(f"• {comp['name']}: {comp['ingredient']} – {mg_text}")
-    st.markdown("**Techninė dubliavimo patikra (ne sąveikos vertinimas)**")
-    for warning in demo_warnings:
-        st.warning(warning)
-    for note in demo_notes:
-        st.info(note)
-    if not demo_warnings and not demo_notes:
-        st.caption("Automatinė dubliavimo taisyklė šiai porai nesuveikė. Tai nieko nepasako apie kitokias vaistų sąveikas.")
-    st.caption("Tikrinamas galimas veikliųjų medžiagų dubliavimas. Skirtingų medžiagų mg sumos nėra medicininis rizikos kriterijus. Perspėjimo nebuvimas nereiškia, kad vaistus saugu vartoti kartu.")
-    current_signature = (first, second, int(first_qty), int(second_qty), tuple(demo_warnings))
-    if st.session_state.get("demo_ack_signature") != current_signature and demo_warnings:
-        @st.dialog("⚠️ Dėmesio! Galima vaistų vartojimo rizika!")
-        def _demo_popup():
-            st.warning("Pasirinktas vaistų derinys atitinka vieną ar kelis demonstracinius perspėjimo kriterijus. Kartu vartojant šiuos vaistus gali kilti nepageidaujamų reakcijų arba dozės dubliavimo rizika. Prieš vartodami šiuos vaistus kartu, pasitarkite su gydytoju arba vaistininku.")
-            st.caption("Tai nėra medicininė sąveikų patikra ar saugumo patvirtinimas.")
-            if st.button("Gerai", key="demo_ack_button"):
-                st.session_state["demo_ack_signature"] = current_signature
-                st.rerun()
-        _demo_popup()
+    # Papildoma techninė peržiūra; klinikinio sąveikų vertinimo neatlieka.
+    # Laikome ją suskleistą, kad neklaidintų ir nedubliuotų pagrindinės išvados.
+    with st.expander("🧮 Papildoma sudėties dubliavimo patikra (mokomoji)"):
+        st.caption("Ši pagalbinė patikra nenustato vaistų sąveikos ar derinio saugumo.")
+        q1, q2 = st.columns(2)
+        with q1:
+            first_qty = st.number_input(
+                f"{first}: pakuotės vienetų skaičius",
+                min_value=1, max_value=100, value=1, step=1, key="demo_qty_first",
+            )
+        with q2:
+            second_qty = st.number_input(
+                f"{second}: pakuotės vienetų skaičius",
+                min_value=1, max_value=100, value=1, step=1, key="demo_qty_second",
+            )
+        demo_items = [
+            _demo_info(first, int(first_qty), st.session_state.get("first_vvkt_selected")),
+            _demo_info(second, int(second_qty), st.session_state.get("second_vvkt_selected")),
+        ]
+        demo_warnings, demo_notes, _ = analyze_demo_risk(demo_items)
+        for warning in demo_warnings:
+            st.warning(warning)
+        for note in demo_notes:
+            st.info(note)
+        if not demo_warnings and not demo_notes:
+            st.caption("Pagalbinė dubliavimo taisyklė nesuveikė.")
+        st.caption("Net ir neradus dubliavimo, negalima daryti išvados, kad derinys saugus. "
+                   "Vienetų skaičius nėra individualios dozės ar klinikinės rizikos įvertinimas.")
 
 
 # =========================================================
@@ -3133,91 +3130,23 @@ if st.button(
             st.info("Rankiniu būdu pasirinktam vaistui VVKT gali turėti kelis stiprumus. "
                     "Jeigu variantas nepatvirtintas tiksliai, būtina papildoma patikra.")
 
-        st.subheader(
-            f"💊 {first} + {second}"
-        )
-
-        # =================================================
-        # VEIKLIOSIOS MEDŽIAGOS
-        # =================================================
-
-        st.markdown(
-            "### 🧪 Veikliosios medžiagos"
-        )
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-
-            st.markdown(
-                f"#### {first}"
-            )
-
-            st.write(
-                "**Veiklioji medžiaga:**",
-                ingredient_1 or "—"
-            )
-
-            if first_selected:
-                st.write("**Stiprumas:**", first_selected.get("strength") or "nenurodyta")
-                st.write("**Farmacinė forma:**", first_selected.get("form") or "nenurodyta")
-                st.caption("Duomenys iš konkretaus patvirtinto VVKT kandidato.")
-            elif first_row is not None:
-                st.write("**Stiprumas:**", clean_value(first_row.get("stiprumas")))
-                st.write("**Farmacinė forma:**", clean_value(first_row.get("farmacine_forma_lt")))
-
-        with col2:
-
-            st.markdown(
-                f"#### {second}"
-            )
-
-            st.write(
-                "**Veiklioji medžiaga:**",
-                ingredient_2 or "—"
-            )
-
-            if second_selected:
-                st.write("**Stiprumas:**", second_selected.get("strength") or "nenurodyta")
-                st.write("**Farmacinė forma:**", second_selected.get("form") or "nenurodyta")
-                st.caption("Duomenys iš konkretaus patvirtinto VVKT kandidato.")
-            elif second_row is not None:
-                st.write("**Stiprumas:**", clean_value(second_row.get("stiprumas")))
-                st.write("**Farmacinė forma:**", clean_value(second_row.get("farmacine_forma_lt")))
-
-        # =================================================
-        # KAIP VEIKIA KARTU
-        # =================================================
-
-        st.markdown(
-            "## 🔬 KAIP ŠIE VAISTAI VEIKIA KARTU"
-        )
-
-        # Senojo profilio trūkumo nekartojame, kai rodomas VAPRIS
-        # šaltinis; tai nėra įrodymas, kad vaistų pora saugi.
-        with st.expander("ℹ️ Atskirų veikliųjų medžiagų farmakologinė informacija"):
-            known_1 = show_ingredient_explanation(
-                first,
-                ingredient_1,
-                suppress_missing=True
-            )
-
-            known_2 = show_ingredient_explanation(
-                second,
-                ingredient_2,
-                suppress_missing=True
-            )
-
-        st.markdown("### 🧩 Dviejų vaistų sąveika")
+        st.subheader(f"💊 {first} + {second}")
+        st.caption("Vertinamos patvirtintų VVKT preparatų veikliosios medžiagos. "
+                   "Išsami kiekvieno preparato informacija pateikta aukščiau.")
+        st.markdown("### 🧩 Sąveikos įvertinimas")
         demo_pair = find_demo_pair(ingredient_1, ingredient_2)
         if demo_pair is not None:
-            st.warning("**Rastas mokomasis sąveikos įrašas – nepatvirtintas klinikiniam naudojimui.**")
-            st.markdown(f"**Aprašoma galima rizika:** {demo_pair['galima_saveika']}")
+            st.warning("**Rastas demonstracinis sąveikos įrašas – klinikinis vertinimas nepatvirtintas.**")
+            st.markdown(f"**Galimas sąveikos pobūdis:** {demo_pair['galima_saveika']}")
             st.write(demo_pair["paaiskinimas"])
-            st.caption("Šis poros įrašas dar nepatikrintas pagal konkrečių preparatų PCS, dozes ir vartojimo būdus.")
+            st.caption("Duomenų bazės įrašas nepatikrintas pagal šių preparatų PCS, dozes ir vartojimo būdus.")
         else:
-            st.warning("**Šios poros sąveikai įvertinti nepakanka patikrintų duomenų.**")
-        st.info("**Ką daryti:** prieš vartodami šiuos vaistus kartu pasitarkite su gydytoju arba vaistininku. Nerastas įrašas nereiškia, kad derinys saugus.")
+            st.warning("**Šiai konkrečiai vaistų porai patikrinto sąveikos įrašo neturime.**")
+            st.write("Tai reiškia, kad ši programėlės versija **negali nustatyti nei sąveikos buvimo, "
+                     "nei jos nebuvimo**. Tai nėra derinio saugumo patvirtinimas.")
+        st.info("**Ką daryti:** jeigu ketinate vartoti šiuos vaistus kartu, "
+                "pasitarkite su gydytoju arba vaistininku. Prireikus patikrinkite oficialias "
+                "konkrečių preparatų charakteristikų santraukas (PCS).")
 
         info_1 = get_ingredient_knowledge(
             ingredient_1
@@ -3227,90 +3156,29 @@ if st.button(
             ingredient_2
         )
 
-        # Bandomojo CSV tekstai rodomi atskirai nuo porinės išvados.
-        with st.expander("📄 VAPRIS 4.5 sąveikų informacija (TESTINĖ)"):
-            st.info("Toliau pateikiami atskirų preparatų dokumentų tekstai. "
-                    "Tai nėra automatinis šių dviejų vaistų suderinamumo "
-                    "patvirtinimas. Prieš klinikinį naudojimą būtina "
-                    "patikrinti originalų PCS ir preparato tapatybę.")
+        # Duomenų ištraukos nėra konkrečios poros klinikinės išvados.
+        with st.expander("📚 Papildomi duomenys ir bandomieji dokumentų tekstai"):
+            st.markdown("**Atskirų veikliųjų medžiagų farmakologinė informacija**")
+            show_ingredient_explanation(first, ingredient_1, suppress_missing=True)
+            show_ingredient_explanation(second, ingredient_2, suppress_missing=True)
+            st.markdown("**VAPRIS 4.5 skyriaus tekstai (TESTINIAI)**")
+            st.caption("Tai atskirų preparatų dokumentų ištraukos, o ne konkrečios "
+                       "poros sąveikos patvirtinimas. Reikia tikrinti originalų PCS ir preparato tapatybę.")
             show_test_document_interactions(first)
             st.divider()
             show_test_document_interactions(second)
-
-        # Nepatikrintos grupinės taisyklės nėra konkrečios poros išvada.
-        # V5 automatiniai įrašai į šį klinikinės išvados kelią nejungiami.
-        st.caption("Medicininė išvada neteikiama be konkrečios poros patikrintų šaltinių.")
-        # =================================================
-        # VARTOJIMO BŪDAS
-        # =================================================
-
-        st.markdown(
-            "### 💉 Vartojimo būdas"
-        )
-
-        if first_row is not None:
-
-            st.write(
-                f"**{first}:**",
-                clean_value(
-                    first_row.get(
-                        "vartojimo_budas"
-                    )
-                )
-            )
-
-        if second_row is not None:
-
-            st.write(
-                f"**{second}:**",
-                clean_value(
-                    second_row.get(
-                        "vartojimo_budas"
-                    )
-                )
-            )
-
-        # =================================================
-        # FARMAKOLOGINIŲ PROFILIŲ ŠALTINIAI
-        # =================================================
-
-        st.markdown(
-            "### 📚 Farmakologinių profilių šaltiniai"
-        )
-
-        shown_sources = set()
-
-        for info in [
-            info_1,
-            info_2
-        ]:
-
-            if info is None:
-                continue
-
-            source = clean_value(
-                info.get("source")
-            )
-
-            if (
-                source != "—"
-                and source not in shown_sources
-            ):
-
-                st.write(
-                    f"• {source}"
-                )
-
-                shown_sources.add(
-                    source
-                )
-
-        st.caption(
-            "Preparatų pavadinimai, veikliosios "
-            "medžiagos, stiprumas, farmacinė forma "
-            "ir vartojimo būdas gaunami iš projekte "
-            "esančio VVKT duomenų rinkinio."
-        )
+            st.markdown("**Farmakologinių profilių šaltinių aprašai**")
+            shown_sources = set()
+            for info in (get_ingredient_knowledge(ingredient_1),
+                         get_ingredient_knowledge(ingredient_2)):
+                if info is None:
+                    continue
+                source = clean_value(info.get("source"))
+                if source != "—" and source not in shown_sources:
+                    st.write(f"• {source}")
+                    shown_sources.add(source)
+            st.caption("VVKT katalogo informacija apie pavadinimą, veikliąją medžiagą, "
+                       "stiprumą, formą ir vartojimo būdą parodyta prie patvirtintų preparatų.")
 
 
 # =========================================================
