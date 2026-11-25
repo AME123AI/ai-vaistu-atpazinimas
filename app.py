@@ -2235,6 +2235,12 @@ def forms_compatible(ocr_form, vvkt_form):
 
     ocr_category = category(ocr)
     vvkt_category = category(vvkt)
+    # Bendrinė OCR forma yra suderinama su tikslesne VVKT forma,
+    # bet konkreti kapsulės/tabletės rūšis lieka tikrintina ant pakuotės.
+    if ocr_category == "kapsules" and vvkt_category in (
+        "kapsules", "minkstosios kapsules", "kietosios kapsules"
+    ):
+        return True
     if not ocr_category or ocr_category != vvkt_category:
         return False
 
@@ -2298,6 +2304,35 @@ def form_score(
     return score
 
 
+def matching_named_strength_variants(ocr_text, candidate_names, found_strengths):
+    """Išplečia pažodžiui aptikto pavadinimo VVKT variantus pagal stiprumą.
+
+    Neieško vien pagal veikliąją medžiagą; priedai nėra OCR įrodymas.
+    """
+    if not found_strengths:
+        return []
+    exact_base = ocr_read_brand_name(ocr_text, vvkt_names)
+    if not exact_base or exact_base not in candidate_names:
+        return []
+    base = normalize_text(exact_base)
+    allowed_suffixes = {"forte", "express", "rapid", "max", "plus"}
+    detected = {normalize_strength_value(x) for x in found_strengths}
+    found = []
+    for name in vvkt_names:
+        norm = normalize_text(name)
+        if not norm.startswith(base + " "):
+            continue
+        suffix = norm[len(base):].strip()
+        if suffix not in allowed_suffixes:
+            continue
+        for _, row in get_vvkt_rows(name).iterrows():
+            value = normalize_strength_value(clean_value(row.get("stiprumas")))
+            if value in detected:
+                found.append(name)
+                break
+    return found
+
+
 # =========================================================
 # VVKT KANDIDATŲ REITINGAVIMAS – PATOBULINTA VERSIJA
 # =========================================================
@@ -2314,6 +2349,17 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
     found_ingredient = detect_ingredient(ocr_text)
     found_strengths = extract_strengths(ocr_text)
     found_form = detect_form(ocr_text)
+    # Jeigu OCR perskaitė tik pagrindinį pavadinimą (pvz. GeloMyrtol),
+    # jo registruoti "forte" / "express" variantai įtraukiami TIK tada,
+    # kai jų VVKT stiprumas atitinka iš tikrųjų OCR perskaitytą stiprumą.
+    # Papildomo žodžio nelaikome OCR atpažintu ir nepaverčiame automatiškai
+    # patvirtintu vaistu.
+    variant_names = matching_named_strength_variants(
+        ocr_text, candidate_names, found_strengths
+    )
+    for variant_name in variant_names:
+        if variant_name not in candidate_names:
+            candidate_names.append(variant_name)
     if found_ingredient and len(candidate_names) < 8:
         matched_rows = vvkt[
             vvkt["veiklioji_medz_lt"].fillna("").astype(str).apply(normalize_text)
@@ -2329,6 +2375,11 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
     ocr_whole = normalize_text(ocr_text)
     for name in candidate_names:
         ns = name_score(name, ocr_text)
+        # "GeloMyrtol" + OCR 300 mg gali pagrįstai pasiūlyti VVKT
+        # "GeloMyrtol forte 300 mg", bet žodžio "forte" OCR nerado:
+        # todėl pavadinimo balas ne 100 %, reikalingas rankinis patikrinimas.
+        if name in variant_names:
+            ns = max(ns, 0.80)
         full_name = normalize_text(name)
         if len(full_name.split()) >= 2 and re.search(
             r"(?<![a-z0-9])" + re.escape(full_name) + r"(?![a-z0-9])", ocr_whole
@@ -2452,7 +2503,8 @@ st.markdown(
 
 uploaded = st.file_uploader(
     "Vaisto pakuotės nuotrauka",
-    type=["jpg", "jpeg", "png"]
+    type=["jpg", "jpeg", "png"],
+    key=f"first_drug_image_{st.session_state.get('interaction_cycle', 0)}"
 )
 
 
@@ -2946,7 +2998,7 @@ st.markdown(
 second_uploaded = st.file_uploader(
     "Antro vaisto pakuotės nuotrauka",
     type=["jpg", "jpeg", "png"],
-    key="second_drug_image"
+    key=f"second_drug_image_{st.session_state.get('interaction_cycle', 0)}"
 )
 
 if second_uploaded:
@@ -3444,6 +3496,7 @@ if st.button(
 
     else:
 
+        st.session_state["completed_interaction_analysis"] = True
         # Pasirinkto kandidato duomenys turi pirmenybę prieš paiešką vien pagal pavadinimą.
         first_selected = st.session_state.get("first_vvkt_selected")
         second_selected = st.session_state.get("second_vvkt_selected")
@@ -3521,6 +3574,19 @@ if st.button(
         # aiškinimas. Atskirų nepatikrintų PCS tekstų ir tuščių
         # farmakologinių profilių čia nebedubliuojame.
         show_pair_result(ingredient_1, ingredient_2)
+
+# Naujas tikrinimas be naršyklės atnaujinimo. Nešalinami duomenų failai,
+# VVKT registras ar programos cache; išvaloma tik šios sesijos forma.
+if (st.session_state.get("completed_interaction_analysis")
+        and st.session_state.get("first_vvkt_drug")
+        and st.session_state.get("second_vvkt_drug")):
+    st.divider()
+    if st.button("🔄 Tikrinti kitų vaistų sąveikas", type="primary", key="restart_interaction"):
+        next_cycle = st.session_state.get("interaction_cycle", 0) + 1
+        for state_key in list(st.session_state.keys()):
+            del st.session_state[state_key]
+        st.session_state["interaction_cycle"] = next_cycle
+        st.rerun()
 
 # =========================================================
 # APIE SISTEMĄ
