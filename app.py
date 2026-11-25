@@ -962,67 +962,112 @@ def run_ocr(image):
     return run_fast_ocr(image)
 
 def retry_ocr_from_package(image, previous_text, previous_candidates):
-    """Pasirenkamas OCR: originalus atpažinimas niekada nepabloginamas.
+    """Pakartotinis OCR su pasvirimo korekcija; pradinis rezultatas saugomas.
 
-    Jei papildomas nuskaitymas neranda tiksliai perskaityto VVKT pavadinimo,
-    ankstesnis tekstas ir kandidatai paliekami nepakeisti.
+    Skaito tik pareikalavus naudotojui. Priimamas tik VVKT kandidatas,
+    kurio pilnas prekės pavadinimas pažodžiui perskaitytas iš vaizdo.
+    Taip vien veikliosios medžiagos sutapimas netampa vaisto tapatybe.
     """
+    # Jei senasis OCR jau tiksliai perskaitė preparato pavadinimą,
+    # jo nekeičiam. Tai apsaugo Ibuprom, Panadol ir kitus gerus atvejus.
+    previous_normalized = normalize_text(previous_text)
+    for old in previous_candidates or []:
+        old_name = normalize_text(old.get("name", ""))
+        if len(old_name) >= 5 and re.search(
+            r"(?<![a-z0-9])" + re.escape(old_name) + r"(?![a-z0-9])",
+            previous_normalized,
+        ) and float(old.get("name_score", 0)) >= 0.90:
+            return previous_text, previous_candidates, False
+
     base = prepare_fast_ocr_image(image)
-    width, height = base.size
-    # Sudėtingoms pakuotėms pakartotinai skaitome tekstą iš viso vaizdo
-    # ir dviejų plataus centro iškarpų. Jokių naujų bibliotekų nereikia.
-    regions = [base]
-    regions.append(base.crop((int(width*.06), int(height*.08),
-                              int(width*.94), int(height*.92))))
-    regions.append(base.crop((int(width*.12), int(height*.20),
-                              int(width*.88), int(height*.78))))
-    texts = []
-    for region in regions:
-        gray = ImageOps.autocontrast(ImageOps.grayscale(region))
-        if max(gray.size) < 1100:
-            factor = min(2.0, 1500 / max(gray.size))
-            gray = gray.resize((int(gray.width*factor), int(gray.height*factor)),
-                               Image.Resampling.LANCZOS)
-        for psm in (6, 11):
-            try:
-                value = pytesseract.image_to_string(gray, config=f"--psm {psm}").strip()
-                if value and value not in texts:
-                    texts.append(value)
-            except Exception:
-                pass
+    # Lietuviškų vaistų pakuočių nuotraukos dažnai pasvirusios 15–35°.
+    # Baltas fonas pasukant svarbus, kad Tesseract neskaitytų juodų kampų.
+    # PSM 11 skaito išsklaidytus užrašus, PSM 6 – pavadinimo eilutę.
+    variants = [(base, 0)]
+    for angle in (25, -25, 15, -15, 35, -35):
+        variants.append((base, angle))
+    # Jei visas kadras nepadeda, patikriname tik centrinę dalį (be stalo).
+    w, h = base.size
+    if min(w, h) >= 180:
+        region = base.crop((int(w * 0.07), int(h * 0.07),
+                            int(w * 0.93), int(h * 0.93)))
+        variants.extend((region, angle) for angle in (25, -25, 35, -35))
 
-    if not texts:
-        return previous_text, previous_candidates, False
-
-    # Pasirenkame tik švarią kandidatų peržiūrą; nepildome seno OCR triukšmu.
-    # Tikslus viso preparato pavadinimo sutapimas yra būtina sąlyga.
-    previous_score = max((float(x.get('score', 0)) for x in previous_candidates), default=0)
-    previous_name = max((float(x.get('name_score', 0)) for x in previous_candidates), default=0)
+    previous_best_score = max(
+        (float(x.get("score", 0)) for x in (previous_candidates or [])),
+        default=0.0,
+    )
     best = None
-    for text in texts:
-        text_normalized = normalize_text(text)
-        candidates = rank_vvkt_candidates(text, top_n=5)
-        if not candidates:
-            continue
-        first = candidates[0]
-        drug_name = normalize_text(first.get('name', ''))
-        if len(drug_name) < 5:
-            continue
-        # Nepriimame vien panašumo arba pavienės sudėtinio vaisto medžiagos.
-        if not re.search(r'(?<![a-z0-9])' + re.escape(drug_name) + r'(?![a-z0-9])', text_normalized):
-            continue
-        if first.get('ocr_strength_match') is False or first.get('ocr_form_match') is False:
-            continue
-        if float(first.get('name_score', 0)) < .90 or float(first.get('score', 0)) < .65:
-            continue
-        if float(first.get('score', 0)) <= previous_score + .05 and previous_name >= .90:
-            continue
-        if best is None or float(first['score']) > float(best[1][0]['score']):
-            best = (text, candidates)
-
+    for region, angle in variants:
+        if angle:
+            region = region.rotate(angle, expand=True, fillcolor=(255, 255, 255))
+        gray = ImageOps.autocontrast(ImageOps.grayscale(region))
+        # Teksto raidės turi būti pakankamo dydžio, bet ribojame RAM.
+        longest = max(gray.size)
+        if longest < 1450:
+            scale = min(2.0, 1450.0 / max(1, longest))
+            gray = gray.resize(
+                (max(1, int(gray.width * scale)),
+                 max(1, int(gray.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        for psm in (11, 6):
+            try:
+                text = pytesseract.image_to_string(
+                    gray, config=f"--psm {psm}", timeout=8
+                ).strip()
+            except Exception:
+                continue
+            if not text:
+                continue
+            normalized = normalize_text(text)
+            # Pirmiausia ieškome TIK pilnai perskaitytų prekės pavadinimų.
+            # Nekviečiame brangios VVKT analizės atsitiktiniam OCR triukšmui.
+            tokens = set(normalized.split())
+            exact_names = []
+            for name in vvkt_names:
+                clean_name = normalize_text(name)
+                if len(clean_name) < 5 or clean_name.split()[0] not in tokens:
+                    continue
+                if re.search(
+                    r"(?<![a-z0-9])" + re.escape(clean_name) + r"(?![a-z0-9])",
+                    normalized,
+                ):
+                    exact_names.append(name)
+            if not exact_names:
+                continue
+            candidates = rank_vvkt_candidates(text, top_n=5)
+            for candidate in candidates:
+                if candidate.get("name") not in exact_names:
+                    continue
+                if float(candidate.get("name_score", 0)) < 0.90:
+                    continue
+                if float(candidate.get("score", 0)) < 0.55:
+                    continue
+                if candidate.get("ocr_strength_match") is False:
+                    continue
+                if candidate.get("ocr_form_match") is False:
+                    continue
+                score = float(candidate.get("score", 0))
+                # Nekeisti ankstesnio bent jau pakankamai gero rezultato
+                # kitu vaistu, ypač dėl vieno atsitiktinio OCR fragmento.
+                # Senasis kandidatas gali turėti aukštą balą vien dėl
+                # veikliosios medžiagos (pvz., Pantoprazole-Mepha).
+                # Pilnas kito pavadinimo OCR įrodymas turi pirmenybę;
+                # tiksliai perskaityti seni pavadinimai apsaugoti aukščiau.
+                if best is None or score > best[0]:
+                    chosen_first = [candidate] + [
+                        x for x in candidates if x is not candidate
+                    ]
+                    best = (score, text, chosen_first)
+            # Aukšto patikimumo pilnas pavadinimo sutapimas – baigiame,
+            # kad nereikėtų veltui vykdyti visų nuskaitymo variantų.
+            if best is not None and best[0] >= 0.95:
+                return best[1], best[2], True
     if best is None:
         return previous_text, previous_candidates, False
-    return best[0], best[1], True
+    return best[1], best[2], True
+
 
 
 def ocr_read_brand_name(ocr_text, known_names):
