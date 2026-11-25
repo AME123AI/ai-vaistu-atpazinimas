@@ -2408,7 +2408,7 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
     if not ocr_text or not ocr_text.strip():
         return []
     candidate_names = find_name_candidates(ocr_text, max_names=100)
-    found_ingredient = detect_ingredient(ocr_text)
+    # Veikliųjų medžiagų iš OCR neatpažįstame: jų sudėtį imame tik iš VVKT.
     found_strengths = extract_strengths(ocr_text)
     found_form = detect_form(ocr_text)
     # Jeigu OCR perskaitė tik pagrindinį pavadinimą (pvz. GeloMyrtol),
@@ -2422,14 +2422,6 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
     for variant_name in variant_names:
         if variant_name not in candidate_names:
             candidate_names.append(variant_name)
-    if found_ingredient and len(candidate_names) < 8:
-        matched_rows = vvkt[
-            vvkt["veiklioji_medz_lt"].fillna("").astype(str).apply(normalize_text)
-            == normalize_text(found_ingredient)
-        ]
-        for value in matched_rows["preparato_pav"].dropna().astype(str).tolist():
-            if value not in candidate_names:
-                candidate_names.append(value)
     results = []
     seen = set()
     # OCR eilutės gali atskirti vieno prekės ženklo žodžius (IBUPROM / EXPRESS).
@@ -2459,7 +2451,8 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
             if identity in seen:
                 continue
             seen.add(identity)
-            ins = ingredient_score(ingredient, ocr_text)
+            # Veikliosios medžiagos OCR balo nebeskaičiuojame.
+            ins = 0.0  # palikta tik vidinio kandidato formato suderinamumui
             ss = strength_score(strength, ocr_text)
             fs = form_score(form, ocr_text)
             # Griežtas skaitinio stiprumo sutapimas, kai OCR jį aptiko.
@@ -2468,7 +2461,7 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
                 for x in found_strengths
             )
             form_match = bool(found_form) and forms_compatible(found_form, form)
-            score = ns * 0.65 + ins * 0.05 + ss * 0.20 + fs * 0.10
+            score = ns * 0.70 + ss * 0.20 + fs * 0.10
             if found_strengths:
                 score += 0.22 if strength_match else -0.38
             if found_form:
@@ -2656,9 +2649,6 @@ if uploaded:
         ocr_text
     )
 
-    detected_ingredient = detect_ingredient(
-        ocr_text
-    )
     with st.expander("🔍 OCR perskaitytas tekstas"):
         st.caption(
             f"Naudotas OCR: {ocr_engine}"
@@ -2678,11 +2668,6 @@ if uploaded:
         or "OCR pavadinimo patikimai nenustatė"
     )
 
-    st.write(
-        "**Veiklioji medžiaga:**",
-        detected_ingredient
-        or "OCR nenustatė; galimo VVKT kandidato duomenys pateikiami žemiau"
-    )
 
     st.write(
         "**Stiprumas:**",
@@ -2738,7 +2723,7 @@ if uploaded:
         else:
             st.warning(f"VVKT paieškos pasiūlymas, tapatybė nepatvirtinta: **{candidate['name']}**")
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
 
         c1.metric(
             "Bendras atitikimas",
@@ -2750,13 +2735,9 @@ if uploaded:
             f"{candidate['name_score'] * 100:.0f}%"
         )
 
-        c3.metric(
-            "Veiklioji medžiaga",
-            f"{candidate['ingredient_score'] * 100:.0f}%"
-        )
 
         st.write(
-            "**Veiklioji medžiaga:**",
+            "**Veiklioji medžiaga (VVKT kandidato duomenys):**",
             candidate["ingredient"]
         )
 
@@ -3031,9 +3012,6 @@ if second_uploaded:
         second_ocr_text
     )
 
-    second_detected_ingredient = detect_ingredient(
-        second_ocr_text
-    )
 
     with st.expander(
         "🔍 Antro vaisto OCR perskaitytas tekstas"
@@ -3059,11 +3037,6 @@ if second_uploaded:
         or "OCR pavadinimo patikimai nenustatė"
     )
 
-    st.write(
-        "**Veiklioji medžiaga:**",
-        second_detected_ingredient
-        or "OCR nenustatė; galimo VVKT kandidato sudėtis pateikiama žemiau"
-    )
 
     st.write(
         "**Stiprumas:**",
@@ -3119,7 +3092,7 @@ if second_uploaded:
         else:
             st.warning(f"VVKT paieškos pasiūlymas, tapatybė nepatvirtinta: **{second_candidate['name']}**")
 
-        second_c1, second_c2, second_c3 = st.columns(3)
+        second_c1, second_c2 = st.columns(2)
 
         second_c1.metric(
             "Bendras atitikimas",
@@ -3131,10 +3104,6 @@ if second_uploaded:
             f"{second_candidate['name_score'] * 100:.0f}%"
         )
 
-        second_c3.metric(
-            "Veiklioji medžiaga",
-            f"{second_candidate['ingredient_score'] * 100:.0f}%"
-        )
 
         st.write(
             "**Veiklioji medžiaga (VVKT kandidatas, dar nepatvirtinta):**",
