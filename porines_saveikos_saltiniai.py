@@ -26,7 +26,7 @@ ALIASES = {
     'dekstrometorfanas': ('dekstrometorfanas','dekstrometorfano hidrobromidas','dextromethorphan'),
     'acetilsalicilo rūgštis': ('acetilsalicilo rugstis','acetilsalicilo rūgštis','aspirinas','acetylsalicylic acid'),
     'naproksenas': ('naproksenas', 'naproxen'),
-    'diklofenakas': ('diklofenakas','diclofenac'),
+    'diklofenakas': ('diklofenakas','diklofenako', 'diklofenako natrio druska','diclofenac', 'diclofenacum natricum'),
     'deksketoprofenas': ('deksketoprofenas','dexketoprofen'),
     'ketoprofenas': ('ketoprofenas','ketoprofen'),
     'varfarinas': ('varfarinas','warfarin'),
@@ -67,6 +67,29 @@ PROFILES = {
     'simvastatinas': ('Statinas', 'Mažina cholesterolio koncentraciją.'),
     'pseudoefedrinas': ('Simpatomimetikas', 'Mažina nosies užgulimą; svarbu įvertinti kraujospūdį.'),
 }
+# Tik aiškiai atpažintos sisteminių NVNU grupės veikliosios medžiagos.
+# Mažų acetilsalicilo rūgšties antitrombocitinių dozių situacijos atskiros,
+# todėl šiame automatiniame sąraše jos sąmoningai nėra.
+SYSTEMIC_NSAIDS = {
+    'ibuprofenas', 'naproksenas', 'diklofenakas',
+    'deksketoprofenas', 'ketoprofenas',
+}
+NSAID_SOURCE = 'https://www.medicines.org.uk/emc/product/159/smpc'
+DICLOFENAC_SOURCE = 'https://www.medicines.org.uk/emc/product/2662/smpc'
+
+
+def nsaid_pair_risk(a, b):
+    """Vienas konkretus grupės perspėjimas; tai nėra saugumo išvada.
+
+    Forma ir vartojimo kelias čia nežinomi, tad perspėjimas kalba apie
+    sisteminį vartojimą ir nepaverčia vietinio preparato sisteminiu.
+    """
+    found = sorted({(x, y) for x in a for y in b
+                    if x in SYSTEMIC_NSAIDS and y in SYSTEMIC_NSAIDS
+                    and x != y})
+    return bool(found)
+
+
 BOTANICAL_TERMS=('verbenu','verbena','gencijon','gentiana','rugstyni','rumex','seivamed','sambucus','raktazol','primula','eteriniu alieju','eukalipt','miros','mirtu')
 
 
@@ -100,7 +123,7 @@ def records(data_path=None):
 def evaluate_pair(first, second, data_path=None):
     a,b=substances(first),substances(second)
     if not a or not b:
-        return dict(type='missing',records=[],a=a,b=b,shared=[],profiles=[])
+        return dict(type='missing',records=[],a=a,b=b,shared=[],profiles=[],nsaid_group_warning=False)
     shared=sorted(set(a)&set(b))
     matches=[]
     pairs={frozenset((x,y)) for x in a for y in b if x!=y}
@@ -114,7 +137,9 @@ def evaluate_pair(first, second, data_path=None):
     for name in dict.fromkeys(a+b):
         if name in PROFILES:
             profiles.append((name,)+PROFILES[name])
-    return dict(type='documented' if matches else 'screening',records=matches,a=a,b=b,shared=shared,profiles=profiles)
+    return dict(type='documented' if matches else 'screening', records=matches,
+                a=a, b=b, shared=shared, profiles=profiles,
+                nsaid_group_warning=nsaid_pair_risk(a,b))
 
 
 def find_documented_pairs(first,second,data_path=None):
@@ -130,6 +155,9 @@ def explain_pair(first, second, data_path=None):
     elif result['shared']:
         status = 'dubliavimas'
         summary = 'Abiejuose preparatuose kartojasi ta pati veiklioji medžiaga.'
+    elif result.get('nsaid_group_warning'):
+        status = 'nvnu_grupes_rizika'
+        summary = 'Abiejų preparatų veikliosios medžiagos priklauso NVNU grupei.'
     elif result['records']:
         status = 'zinoma_saveika'
         summary = 'Pagal veikliųjų medžiagų porą rasta sąveikos informacija.'
@@ -160,6 +188,25 @@ def show_pair_result(first, second):
         st.write('**Į ką atkreipti dėmesį?** Tikrinti bendrą dozę ir vartojimo dažnį. Vien dubliavimas dar neįrodo perdozavimo, tačiau gali padidinti jo tikimybę.')
         st.caption('Rezultatas nustatytas iš sudėties, ne iš individualiai patvirtintos klinikinės išvados.')
 
+    if result.get('nsaid_group_warning'):
+        st.error(
+            '⛔ **NVNU grupės sąveikos perspėjimas.** Jei abu preparatai '
+            'vartojami sistemiškai, jų derinys paprastai nerekomenduojamas. '
+            'Gali didėti virškinamojo trakto opų ir kraujavimo rizika. '
+            'Vien skirtingi veikliųjų medžiagų pavadinimai nereiškia, kad '
+            'tai nepriklausomi ar saugūs kartu vartoti vaistai.'
+        )
+        st.caption(
+            'Tai oficialių preparatų charakteristikų pagrindu pateikta '
+            'farmakologinės grupės atsargumo taisyklė, ne individualus '
+            'klinikinis derinio įvertinimas. Vietinio ir sisteminio vartojimo '
+            'situacijos gali skirtis – reikia patikrinti vaisto formą ir kelią.'
+        )
+        st.markdown(
+            '[Deksketoprofeno preparato charakteristika](' + NSAID_SOURCE + ')'
+            ' · [Diklofenako preparato charakteristika](' + DICLOFENAC_SOURCE + ')'
+        )
+
     if result['records']:
         st.markdown('**Žinomos sąveikos ir atsargumo sąlygos**')
         for r in result['records'][:8]:
@@ -185,7 +232,7 @@ def show_pair_result(first, second):
                 st.markdown('[Peržiūrėti informacijos šaltinį](' + url + ')')
         if len(result['records']) > 8:
             st.caption('Rodomi 8 aktualiausi įrašai iš mokomosios duomenų bazės.')
-    elif not result['shared']:
+    elif not result['shared'] and not result.get('nsaid_group_warning'):
         st.info('**Sudėties palyginimas:** tų pačių veikliųjų medžiagų nenustatyta.')
         st.write('**Sąveikos duomenys:** šiai konkrečiai porai mūsų mokomojoje bazėje dokumentuotos sąveikos įrašo nėra. Tai nėra patvirtinimas, kad derinys saugus.')
 
@@ -197,4 +244,4 @@ def show_pair_result(first, second):
     if any(any(term in x for term in BOTANICAL_TERMS) for x in result['a'] + result['b']):
         st.caption('Augalinių medžiagų derinių sąveikos gali būti nepakankamai ištirtos; įrašo nebuvimas nepatvirtina saugumo.')
     st.caption('Edukacinė sudėties ir šaltinių analizė; nėra individuali medicininė rekomendacija.')
-    return bool(result['records'] or result['shared'] or result['profiles'])
+    return bool(result['records'] or result['shared'] or result['profiles'] or result.get('nsaid_group_warning'))

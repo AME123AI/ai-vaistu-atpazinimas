@@ -962,67 +962,112 @@ def run_ocr(image):
     return run_fast_ocr(image)
 
 def retry_ocr_from_package(image, previous_text, previous_candidates):
-    """Pasirenkamas OCR: originalus atpažinimas niekada nepabloginamas.
+    """Pakartotinis OCR su pasvirimo korekcija; pradinis rezultatas saugomas.
 
-    Jei papildomas nuskaitymas neranda tiksliai perskaityto VVKT pavadinimo,
-    ankstesnis tekstas ir kandidatai paliekami nepakeisti.
+    Skaito tik pareikalavus naudotojui. Priimamas tik VVKT kandidatas,
+    kurio pilnas prekės pavadinimas pažodžiui perskaitytas iš vaizdo.
+    Taip vien veikliosios medžiagos sutapimas netampa vaisto tapatybe.
     """
+    # Jei senasis OCR jau tiksliai perskaitė preparato pavadinimą,
+    # jo nekeičiam. Tai apsaugo Ibuprom, Panadol ir kitus gerus atvejus.
+    previous_normalized = normalize_text(previous_text)
+    for old in previous_candidates or []:
+        old_name = normalize_text(old.get("name", ""))
+        if len(old_name) >= 5 and re.search(
+            r"(?<![a-z0-9])" + re.escape(old_name) + r"(?![a-z0-9])",
+            previous_normalized,
+        ) and float(old.get("name_score", 0)) >= 0.90:
+            return previous_text, previous_candidates, False
+
     base = prepare_fast_ocr_image(image)
-    width, height = base.size
-    # Sudėtingoms pakuotėms pakartotinai skaitome tekstą iš viso vaizdo
-    # ir dviejų plataus centro iškarpų. Jokių naujų bibliotekų nereikia.
-    regions = [base]
-    regions.append(base.crop((int(width*.06), int(height*.08),
-                              int(width*.94), int(height*.92))))
-    regions.append(base.crop((int(width*.12), int(height*.20),
-                              int(width*.88), int(height*.78))))
-    texts = []
-    for region in regions:
-        gray = ImageOps.autocontrast(ImageOps.grayscale(region))
-        if max(gray.size) < 1100:
-            factor = min(2.0, 1500 / max(gray.size))
-            gray = gray.resize((int(gray.width*factor), int(gray.height*factor)),
-                               Image.Resampling.LANCZOS)
-        for psm in (6, 11):
-            try:
-                value = pytesseract.image_to_string(gray, config=f"--psm {psm}").strip()
-                if value and value not in texts:
-                    texts.append(value)
-            except Exception:
-                pass
+    # Lietuviškų vaistų pakuočių nuotraukos dažnai pasvirusios 15–35°.
+    # Baltas fonas pasukant svarbus, kad Tesseract neskaitytų juodų kampų.
+    # PSM 11 skaito išsklaidytus užrašus, PSM 6 – pavadinimo eilutę.
+    variants = [(base, 0)]
+    for angle in (25, -25, 15, -15, 35, -35):
+        variants.append((base, angle))
+    # Jei visas kadras nepadeda, patikriname tik centrinę dalį (be stalo).
+    w, h = base.size
+    if min(w, h) >= 180:
+        region = base.crop((int(w * 0.07), int(h * 0.07),
+                            int(w * 0.93), int(h * 0.93)))
+        variants.extend((region, angle) for angle in (25, -25, 35, -35))
 
-    if not texts:
-        return previous_text, previous_candidates, False
-
-    # Pasirenkame tik švarią kandidatų peržiūrą; nepildome seno OCR triukšmu.
-    # Tikslus viso preparato pavadinimo sutapimas yra būtina sąlyga.
-    previous_score = max((float(x.get('score', 0)) for x in previous_candidates), default=0)
-    previous_name = max((float(x.get('name_score', 0)) for x in previous_candidates), default=0)
+    previous_best_score = max(
+        (float(x.get("score", 0)) for x in (previous_candidates or [])),
+        default=0.0,
+    )
     best = None
-    for text in texts:
-        text_normalized = normalize_text(text)
-        candidates = rank_vvkt_candidates(text, top_n=5)
-        if not candidates:
-            continue
-        first = candidates[0]
-        drug_name = normalize_text(first.get('name', ''))
-        if len(drug_name) < 5:
-            continue
-        # Nepriimame vien panašumo arba pavienės sudėtinio vaisto medžiagos.
-        if not re.search(r'(?<![a-z0-9])' + re.escape(drug_name) + r'(?![a-z0-9])', text_normalized):
-            continue
-        if first.get('ocr_strength_match') is False or first.get('ocr_form_match') is False:
-            continue
-        if float(first.get('name_score', 0)) < .90 or float(first.get('score', 0)) < .65:
-            continue
-        if float(first.get('score', 0)) <= previous_score + .05 and previous_name >= .90:
-            continue
-        if best is None or float(first['score']) > float(best[1][0]['score']):
-            best = (text, candidates)
-
+    for region, angle in variants:
+        if angle:
+            region = region.rotate(angle, expand=True, fillcolor=(255, 255, 255))
+        gray = ImageOps.autocontrast(ImageOps.grayscale(region))
+        # Teksto raidės turi būti pakankamo dydžio, bet ribojame RAM.
+        longest = max(gray.size)
+        if longest < 1450:
+            scale = min(2.0, 1450.0 / max(1, longest))
+            gray = gray.resize(
+                (max(1, int(gray.width * scale)),
+                 max(1, int(gray.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        for psm in (11, 6):
+            try:
+                text = pytesseract.image_to_string(
+                    gray, config=f"--psm {psm}", timeout=8
+                ).strip()
+            except Exception:
+                continue
+            if not text:
+                continue
+            normalized = normalize_text(text)
+            # Pirmiausia ieškome TIK pilnai perskaitytų prekės pavadinimų.
+            # Nekviečiame brangios VVKT analizės atsitiktiniam OCR triukšmui.
+            tokens = set(normalized.split())
+            exact_names = []
+            for name in vvkt_names:
+                clean_name = normalize_text(name)
+                if len(clean_name) < 5 or clean_name.split()[0] not in tokens:
+                    continue
+                if re.search(
+                    r"(?<![a-z0-9])" + re.escape(clean_name) + r"(?![a-z0-9])",
+                    normalized,
+                ):
+                    exact_names.append(name)
+            if not exact_names:
+                continue
+            candidates = rank_vvkt_candidates(text, top_n=5)
+            for candidate in candidates:
+                if candidate.get("name") not in exact_names:
+                    continue
+                if float(candidate.get("name_score", 0)) < 0.90:
+                    continue
+                if float(candidate.get("score", 0)) < 0.55:
+                    continue
+                if candidate.get("ocr_strength_match") is False:
+                    continue
+                if candidate.get("ocr_form_match") is False:
+                    continue
+                score = float(candidate.get("score", 0))
+                # Nekeisti ankstesnio bent jau pakankamai gero rezultato
+                # kitu vaistu, ypač dėl vieno atsitiktinio OCR fragmento.
+                # Senasis kandidatas gali turėti aukštą balą vien dėl
+                # veikliosios medžiagos (pvz., Pantoprazole-Mepha).
+                # Pilnas kito pavadinimo OCR įrodymas turi pirmenybę;
+                # tiksliai perskaityti seni pavadinimai apsaugoti aukščiau.
+                if best is None or score > best[0]:
+                    chosen_first = [candidate] + [
+                        x for x in candidates if x is not candidate
+                    ]
+                    best = (score, text, chosen_first)
+            # Aukšto patikimumo pilnas pavadinimo sutapimas – baigiame,
+            # kad nereikėtų veltui vykdyti visų nuskaitymo variantų.
+            if best is not None and best[0] >= 0.95:
+                return best[1], best[2], True
     if best is None:
         return previous_text, previous_candidates, False
-    return best[0], best[1], True
+    return best[1], best[2], True
+
 
 
 def ocr_read_brand_name(ocr_text, known_names):
@@ -1033,19 +1078,136 @@ def ocr_read_brand_name(ocr_text, known_names):
     """
     if not ocr_text:
         return None
-    lines = [normalize_text(line) for line in ocr_text.splitlines()]
+    # Tarp dviejų OCR eilučių gali būti atskirti to paties vardo žodžiai:
+    # IBUPROM\nEXPRESS. Normalizuojame visą OCR tekstą, bet reikalaujame
+    # pilno, žodžių ribomis apriboto vardo, ne fuzzy spėjimo.
+    whole = normalize_text(ocr_text)
     possible = []
     for name in known_names:
         word = normalize_text(name)
         if len(word) < 5 or not re.search(r"[a-z]", word):
             continue
         expression = re.compile(r"(?<![a-z0-9])" + re.escape(word) + r"(?![a-z0-9])")
-        if any(expression.search(line) for line in lines):
+        if expression.search(whole):
             possible.append(name)
-    # Jeigu rasti keli skirtingi preparatai, rodome neaiškumą, ne spėjimą.
-    if len(set(possible)) == 1:
+    # Jei visame tekste keli pavadinimai, renkamės tik unikalų ilgiausią
+    # ištisą vardą, kai kiti yra jo dalys (ne skirtingi preparatai).
+    possible = list(dict.fromkeys(possible))
+    if len(possible) == 1:
         return possible[0]
+    if possible:
+        longest = max(possible, key=lambda x: len(normalize_text(x)))
+        if all(normalize_text(x) in normalize_text(longest) for x in possible):
+            return longest
     return None
+
+def ocr_strengths_unique(values):
+    """Sujungia vienodą OCR stiprumą (pvz. 400mg ir 400 mg)."""
+    out = []
+    seen = set()
+    for value in values or []:
+        normalized = normalize_strength_value(value)
+        if normalized not in seen:
+            seen.add(normalized)
+            pretty = re.sub(r"\s*([a-zA-Z]+)$", r" \1", str(value).strip())
+            out.append(pretty)
+    return out
+
+
+def vvkt_ocr_discrepancies(candidate, detected_strengths, detected_form):
+    """Nežinoma OCR reikšmė nėra neatitikimas. Tikrina tik realų prieštaravimą.
+
+    Stiprumo neatitikimas yra tik kai rastas bent vienas stiprumas,
+    tačiau nė vienas nesutampa su pasirinkta VVKT eilute. Formų
+    neatitikimą skaičiuojame tik kai OCR formą iš tikrųjų nustatė.
+    """
+    problems = []
+    strengths = ocr_strengths_unique(detected_strengths)
+    candidate_strength = candidate.get("strength") or ""
+    if strengths and candidate_strength and candidate_strength != "—":
+        if not any(
+            normalize_strength_value(value) == normalize_strength_value(candidate_strength)
+            or strength_score(candidate_strength, value) >= 0.95
+            for value in strengths
+        ):
+            problems.append("Stiprumas")
+    if detected_form and candidate.get("form") and candidate["form"] != "—":
+        if not forms_compatible(detected_form, candidate["form"]):
+            problems.append("Farmacinė forma")
+    return problems
+
+
+def vvkt_variant_needs_manual_check(candidate, candidates, detected_strengths, detected_form):
+    """Atskiria to paties pavadinimo neidentifikuotas VVKT formas/stiprumus.
+
+    Nesugebėtas nuskaityti požymis NĖRA neatitikimas, bet kai jis
+    būtinas variantams atskirti, automatinis patvirtinimas negalimas.
+    """
+    same_name = [c for c in (candidates or []) if c.get("name") == candidate.get("name")]
+    if len(same_name) < 2:
+        return False
+    if not detected_strengths and len({normalize_strength_value(c.get("strength", "")) for c in same_name}) > 1:
+        return True
+    if not detected_form and len({normalize_text(c.get("form", "")) for c in same_name}) > 1:
+        return True
+    return False
+
+
+def show_candidate_verification(candidate, detected_strengths, detected_form, slot, ocr_name=None, variant_ambiguous=False):
+    """Neužblokuoja rankinio patvirtinimo vien dėl nepatikimo OCR.
+
+    Tikras OCR ir VVKT prieštaravimas reikalauja atskiro naudotojo
+    patvirtinimo, kad jis rankiniu būdu patikrino BŪTENT šį variantą.
+    """
+    problems = vvkt_ocr_discrepancies(candidate, detected_strengths, detected_form)
+    name = candidate.get("name") or "nenurodyta"
+    photo_key = st.session_state.get("ocr_image_key" if slot == "first" else "second_ocr_image_key", "")[:12]
+    if not problems and ocr_name == name and not variant_ambiguous:
+        if not detected_strengths or not detected_form:
+            st.caption(
+                "OCR dalies informacijos nenustatė. Tai nėra neatitikimas. "
+                "Prieš patvirtindami palyginkite pakuotę su VVKT pavadinimu, "
+                "stiprumu ir farmacine forma."
+            )
+        return True
+    if not problems and variant_ambiguous:
+        st.warning(
+            "OCR nepakanka atskirti to paties vaisto stiprumo ar "
+            "farmacinės formos variantų. Pavadinimas gali būti teisingas, "
+            "bet pasirinkto VVKT varianto negalima automatiškai patvirtinti."
+        )
+        return st.checkbox(
+            "Palyginau pakuotę ir patvirtinu būtent šį VVKT variantą: "
+            f"{name} | {candidate.get('strength', '—')} | "
+            f"{candidate.get('form', '—')}.",
+            value=False,
+            key=f"{slot}_{photo_key}_variant_{hashlib.sha256(repr((name, candidate.get('strength'), candidate.get('form'))).encode()).hexdigest()[:12]}",
+        )
+    if not problems:
+        st.warning(
+            "OCR nepatvirtino pasirinkto PREKINIO PAVADINIMO. "
+            "Vien veikliosios medžiagos ar stiprumo sutapimo nepakanka "
+            "preparato tapatybei patvirtinti."
+        )
+        return st.checkbox(
+            "Palyginau pakuotės PREKINĮ PAVADINIMĄ, stiprumą ir formą "
+            f"su pasirinktu VVKT įrašu ({name}) – sutampa.",
+            value=False,
+            key=f"{slot}_{photo_key}_identity_{hashlib.sha256(repr((name, candidate.get('strength'), candidate.get('form'))).encode()).hexdigest()[:12]}",
+        )
+    st.warning(
+        "OCR ir pasirinkto VVKT varianto galimas neatitikimas: "
+        + ", ".join(problems)
+        + ". OCR gali klysti; vien algoritmo balas nėra tapatybės įrodymas."
+    )
+    return st.checkbox(
+        "Patikrinau ANT PAKUOTĖS, kad tai tikrai "
+        f"{name} | {candidate.get('strength', '—')} | "
+        f"{candidate.get('form', '—')}; patvirtinu rankiniu būdu.",
+        value=False,
+        key=f"{slot}_{photo_key}_verify_{hashlib.sha256(repr((name, candidate.get('strength'), candidate.get('form'))).encode()).hexdigest()[:12]}",
+    )
+
 
 # =========================================================
 # OCR – STIPRUMO ATPAŽINIMAS
@@ -2064,8 +2226,21 @@ def forms_compatible(ocr_form, vvkt_form):
             return "tabletes"
         return None
 
+    # Geriamasis tirpalas gali būti pakuojamas paketėlyje.
+    # Tikslus vartojimo kelias turi sutapti: injekcinis tirpalas NĖRA
+    # geriamasis tirpalas, todėl jų automatiškai nesutapatiname.
+    oral_solution = "geriamasis tirpalas"
+    if ocr == oral_solution and vvkt.startswith(oral_solution + " "):
+        return True
+
     ocr_category = category(ocr)
     vvkt_category = category(vvkt)
+    # Bendrinė OCR forma yra suderinama su tikslesne VVKT forma,
+    # bet konkreti kapsulės/tabletės rūšis lieka tikrintina ant pakuotės.
+    if ocr_category == "kapsules" and vvkt_category in (
+        "kapsules", "minkstosios kapsules", "kietosios kapsules"
+    ):
+        return True
     if not ocr_category or ocr_category != vvkt_category:
         return False
 
@@ -2129,6 +2304,35 @@ def form_score(
     return score
 
 
+def matching_named_strength_variants(ocr_text, candidate_names, found_strengths):
+    """Išplečia pažodžiui aptikto pavadinimo VVKT variantus pagal stiprumą.
+
+    Neieško vien pagal veikliąją medžiagą; priedai nėra OCR įrodymas.
+    """
+    if not found_strengths:
+        return []
+    exact_base = ocr_read_brand_name(ocr_text, vvkt_names)
+    if not exact_base or exact_base not in candidate_names:
+        return []
+    base = normalize_text(exact_base)
+    allowed_suffixes = {"forte", "express", "rapid", "max", "plus"}
+    detected = {normalize_strength_value(x) for x in found_strengths}
+    found = []
+    for name in vvkt_names:
+        norm = normalize_text(name)
+        if not norm.startswith(base + " "):
+            continue
+        suffix = norm[len(base):].strip()
+        if suffix not in allowed_suffixes:
+            continue
+        for _, row in get_vvkt_rows(name).iterrows():
+            value = normalize_strength_value(clean_value(row.get("stiprumas")))
+            if value in detected:
+                found.append(name)
+                break
+    return found
+
+
 # =========================================================
 # VVKT KANDIDATŲ REITINGAVIMAS – PATOBULINTA VERSIJA
 # =========================================================
@@ -2145,6 +2349,17 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
     found_ingredient = detect_ingredient(ocr_text)
     found_strengths = extract_strengths(ocr_text)
     found_form = detect_form(ocr_text)
+    # Jeigu OCR perskaitė tik pagrindinį pavadinimą (pvz. GeloMyrtol),
+    # jo registruoti "forte" / "express" variantai įtraukiami TIK tada,
+    # kai jų VVKT stiprumas atitinka iš tikrųjų OCR perskaitytą stiprumą.
+    # Papildomo žodžio nelaikome OCR atpažintu ir nepaverčiame automatiškai
+    # patvirtintu vaistu.
+    variant_names = matching_named_strength_variants(
+        ocr_text, candidate_names, found_strengths
+    )
+    for variant_name in variant_names:
+        if variant_name not in candidate_names:
+            candidate_names.append(variant_name)
     if found_ingredient and len(candidate_names) < 8:
         matched_rows = vvkt[
             vvkt["veiklioji_medz_lt"].fillna("").astype(str).apply(normalize_text)
@@ -2160,6 +2375,11 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
     ocr_whole = normalize_text(ocr_text)
     for name in candidate_names:
         ns = name_score(name, ocr_text)
+        # "GeloMyrtol" + OCR 300 mg gali pagrįstai pasiūlyti VVKT
+        # "GeloMyrtol forte 300 mg", bet žodžio "forte" OCR nerado:
+        # todėl pavadinimo balas ne 100 %, reikalingas rankinis patikrinimas.
+        if name in variant_names:
+            ns = max(ns, 0.80)
         full_name = normalize_text(name)
         if len(full_name.split()) >= 2 and re.search(
             r"(?<![a-z0-9])" + re.escape(full_name) + r"(?![a-z0-9])", ocr_whole
@@ -2201,7 +2421,15 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
             })
     # Kai OCR nustatė stiprumą / formą, neprieštaraujantis variantas turi pirmenybę.
     # Kitus variantus paliekame pasirinkimui tik jei nepakanka suderintų kandidatų.
+    # Aiškiai OCR perskaitytas prekinis pavadinimas yra stipresnis
+    # vaisto tapatybės požymis nei vienos veikliosios medžiagos sutapimas.
+    # Pirmumą suteikiame TIK pažodžiui perskaitytam pilnam pavadinimui
+    # ir tik jei nustatytas stiprumas / forma jam neprieštarauja.
+    explicit_name = ocr_read_brand_name(ocr_text, vvkt_names)
     results.sort(key=lambda r: (
+        1 if explicit_name == r["name"]
+           and r["ocr_strength_match"] is not False
+           and r["ocr_form_match"] is not False else 0,
         1 if r["ocr_strength_match"] is True else (0 if r["ocr_strength_match"] is None else -1),
         1 if r["ocr_form_match"] is True else (0 if r["ocr_form_match"] is None else -1),
         r["score"], r["name_score"]
@@ -2275,7 +2503,8 @@ st.markdown(
 
 uploaded = st.file_uploader(
     "Vaisto pakuotės nuotrauka",
-    type=["jpg", "jpeg", "png"]
+    type=["jpg", "jpeg", "png"],
+    key=f"first_drug_image_{st.session_state.get('interaction_cycle', 0)}"
 )
 
 
@@ -2456,7 +2685,7 @@ if uploaded:
                 st.session_state.pop("ocr_candidate", None)
                 st.success("Papildomas OCR rado aiškesnį VVKT pavadinimą. Patikrinkite kandidatą.")
             else:
-                st.info("Papildomas OCR patikimesnio pavadinimo nerado. Ankstesnis rezultatas išsaugotas. Jei reikia, naudokite rankinę VVKT paiešką.")
+                st.info("Papildomas OCR rezultato nepagerino; ankstesnis atpažinimas išsaugotas. Jei reikia, naudokite rankinę VVKT paiešką.")
 
     strengths = extract_strengths(
         ocr_text
@@ -2496,7 +2725,7 @@ if uploaded:
 
     st.write(
         "**Stiprumas:**",
-        ", ".join(strengths[:3])
+        ", ".join(ocr_strengths_unique(strengths)[:3])
         if strengths
         else "OCR nenustatė; galimo VVKT kandidato stiprumas pateikiamas žemiau"
     )
@@ -2529,6 +2758,9 @@ if uploaded:
 
             labels[label] = candidate
 
+        if len({(c.get("strength"), c.get("form")) for c in ranked_candidates}) > 1 and not strengths and not detected_form:
+            st.info("OCR nerado stiprumo ir formos: panašiai įvertinti VVKT variantai nėra lygiaverčiai. Pasirinkite pagal pakuotės užrašus.")
+
         selected_label = st.selectbox(
             "Pasirinkite preparatą",
             list(labels.keys()),
@@ -2539,10 +2771,11 @@ if uploaded:
             selected_label
         ]
 
-        st.success(
-            f"💊 Galimas preparatas: "
-            f"**{candidate['name']}**"
-        )
+        if (ocr_read_brand_name(ocr_text, vvkt_names) == candidate.get("name")
+                and float(candidate.get("score", 0)) >= 0.75):
+            st.success(f"💊 VVKT kandidatas (patikrinkite): **{candidate['name']}**")
+        else:
+            st.warning(f"VVKT paieškos pasiūlymas, tapatybė nepatvirtinta: **{candidate['name']}**")
 
         c1, c2, c3 = st.columns(3)
 
@@ -2582,19 +2815,17 @@ if uploaded:
             "o ne statistinė AI tikimybė."
         )
 
-        if strengths and candidate["strength"] and not any(normalize_strength_value(x) == normalize_strength_value(candidate["strength"]) for x in strengths):
-            st.error("OCR stiprumas nesutampa su pasirinkto VVKT kandidato stiprumu. Patikrinkite preparatą prieš patvirtindami.")
-
-        first_ocr_mismatch = (
-            candidate.get("ocr_strength_match") is False
-            or candidate.get("ocr_form_match") is False
+        first_confirmed_by_user = show_candidate_verification(
+            candidate, strengths, detected_form, "first",
+            ocr_read_brand_name(ocr_text, vvkt_names),
+            variant_ambiguous=vvkt_variant_needs_manual_check(
+                candidate, ranked_candidates, strengths, detected_form
+            )
         )
-        if first_ocr_mismatch:
-            st.error("Pasirinkto VVKT varianto stiprumas arba farmacinė forma nesutampa su OCR. Pasirinkite atitinkantį variantą arba naudokite rankinę paiešką. OCR taip pat gali suklysti.")
         if st.button(
             "✅ Patvirtinti preparatą",
             type="primary",
-            disabled=first_ocr_mismatch
+            disabled=not first_confirmed_by_user
         ):
 
             st.session_state[
@@ -2767,7 +2998,7 @@ st.markdown(
 second_uploaded = st.file_uploader(
     "Antro vaisto pakuotės nuotrauka",
     type=["jpg", "jpeg", "png"],
-    key="second_drug_image"
+    key=f"second_drug_image_{st.session_state.get('interaction_cycle', 0)}"
 )
 
 if second_uploaded:
@@ -2927,7 +3158,7 @@ if second_uploaded:
                 st.session_state.pop("second_ocr_candidate", None)
                 st.success("Papildomas OCR rado aiškesnį VVKT pavadinimą. Patikrinkite kandidatą.")
             else:
-                st.info("Papildomas OCR patikimesnio pavadinimo nerado. Ankstesnis rezultatas išsaugotas. Jei reikia, naudokite rankinę VVKT paiešką.")
+                st.info("Papildomas OCR rezultato nepagerino; ankstesnis atpažinimas išsaugotas. Jei reikia, naudokite rankinę VVKT paiešką.")
 
     second_strengths = extract_strengths(
         second_ocr_text
@@ -2973,7 +3204,7 @@ if second_uploaded:
 
     st.write(
         "**Stiprumas:**",
-        ", ".join(second_strengths[:3])
+        ", ".join(ocr_strengths_unique(second_strengths)[:3])
         if second_strengths
         else "OCR nenustatė; galimo VVKT kandidato stiprumas pateikiamas žemiau"
     )
@@ -3006,6 +3237,9 @@ if second_uploaded:
 
             second_labels[label] = candidate
 
+        if len({(c.get("strength"), c.get("form")) for c in second_ranked_candidates}) > 1 and not second_strengths and not second_detected_form:
+            st.info("OCR nerado stiprumo ir formos: panašiai įvertinti VVKT variantai nėra lygiaverčiai. Pasirinkite pagal pakuotės užrašus.")
+
         second_selected_label = st.selectbox(
             "Pasirinkite antrą preparatą",
             list(second_labels.keys()),
@@ -3016,10 +3250,11 @@ if second_uploaded:
             second_selected_label
         ]
 
-        st.success(
-            f"💊 Galimas antras preparatas: "
-            f"**{second_candidate['name']}**"
-        )
+        if (ocr_read_brand_name(second_ocr_text, vvkt_names) == second_candidate.get("name")
+                and float(second_candidate.get("score", 0)) >= 0.75):
+            st.success(f"💊 VVKT kandidatas (patikrinkite): **{second_candidate['name']}**")
+        else:
+            st.warning(f"VVKT paieškos pasiūlymas, tapatybė nepatvirtinta: **{second_candidate['name']}**")
 
         second_c1, second_c2, second_c3 = st.columns(3)
 
@@ -3058,16 +3293,18 @@ if second_uploaded:
             "balas, o ne statistinė AI tikimybė."
         )
 
-        second_ocr_mismatch = (
-            second_candidate.get("ocr_strength_match") is False
-            or second_candidate.get("ocr_form_match") is False
+        second_confirmed_by_user = show_candidate_verification(
+            second_candidate, second_strengths, second_detected_form, "second",
+            ocr_read_brand_name(second_ocr_text, vvkt_names),
+            variant_ambiguous=vvkt_variant_needs_manual_check(
+                second_candidate, second_ranked_candidates,
+                second_strengths, second_detected_form
+            )
         )
-        if second_ocr_mismatch:
-            st.error("Pasirinkto VVKT varianto stiprumas arba farmacinė forma nesutampa su OCR. Pasirinkite atitinkantį variantą arba naudokite rankinę paiešką. OCR taip pat gali suklysti.")
         if st.button(
             "✅ Patvirtinti antrą preparatą",
             type="primary",
-            disabled=second_ocr_mismatch
+            disabled=not second_confirmed_by_user
         ):
 
             st.session_state[
@@ -3259,6 +3496,7 @@ if st.button(
 
     else:
 
+        st.session_state["completed_interaction_analysis"] = True
         # Pasirinkto kandidato duomenys turi pirmenybę prieš paiešką vien pagal pavadinimą.
         first_selected = st.session_state.get("first_vvkt_selected")
         second_selected = st.session_state.get("second_vvkt_selected")
@@ -3336,6 +3574,19 @@ if st.button(
         # aiškinimas. Atskirų nepatikrintų PCS tekstų ir tuščių
         # farmakologinių profilių čia nebedubliuojame.
         show_pair_result(ingredient_1, ingredient_2)
+
+# Naujas tikrinimas be naršyklės atnaujinimo. Nešalinami duomenų failai,
+# VVKT registras ar programos cache; išvaloma tik šios sesijos forma.
+if (st.session_state.get("completed_interaction_analysis")
+        and st.session_state.get("first_vvkt_drug")
+        and st.session_state.get("second_vvkt_drug")):
+    st.divider()
+    if st.button("🔄 Tikrinti kitų vaistų sąveikas", type="primary", key="restart_interaction"):
+        next_cycle = st.session_state.get("interaction_cycle", 0) + 1
+        for state_key in list(st.session_state.keys()):
+            del st.session_state[state_key]
+        st.session_state["interaction_cycle"] = next_cycle
+        st.rerun()
 
 # =========================================================
 # APIE SISTEMĄ
