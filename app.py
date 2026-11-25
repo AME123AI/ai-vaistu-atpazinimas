@@ -961,6 +961,23 @@ def run_ocr(image):
     """
     return run_fast_ocr(image)
 
+
+
+def should_auto_retry_ocr(ocr_text, candidates):
+    """Tik po silpno pirmojo OCR; vien medžiaga nėra vaisto tapatybės įrodymas."""
+    if not candidates:
+        return True
+    normalized = normalize_text(ocr_text)
+    for item in candidates:
+        full_name = normalize_text(item.get("name", ""))
+        if (len(full_name) >= 5
+                and float(item.get("name_score", 0)) >= 0.90
+                and float(item.get("score", 0)) >= 0.75
+                and re.search(r"(?<![a-z0-9])" + re.escape(full_name)
+                              + r"(?![a-z0-9])", normalized)):
+            return False
+    return True
+
 def retry_ocr_from_package(image, previous_text, previous_candidates):
     """Pakartotinis OCR su pasvirimo korekcija; pradinis rezultatas saugomas.
 
@@ -2627,6 +2644,18 @@ if uploaded:
                 else:
                     ocr_engine = "Tesseract"
 
+        # Tik naujai nuotraukai: automatiškai papildomai skaitome tik jei
+        # pirminis OCR nerado pakankamai įtikinamo pilno VVKT pavadinimo.
+        # Jau patikimai atpažintų preparatų rezultatai nekeičiami.
+        if should_auto_retry_ocr(ocr_text, ranked_candidates):
+            with st.spinner("Tikrinami papildomi pakuotės pasukimai..."):
+                extra_text, extra_candidates, accepted = retry_ocr_from_package(
+                    image, ocr_text, ranked_candidates
+                )
+            if accepted:
+                ocr_text, ranked_candidates = extra_text, extra_candidates
+                ocr_engine = "Automatinis papildomas Tesseract"
+
         # =============================================
         # IŠSAUGOME ŠIOS NUOTRAUKOS REZULTATĄ
         # =============================================
@@ -3100,6 +3129,18 @@ if second_uploaded:
                     )
                 else:
                     second_ocr_engine = "Tesseract"
+
+        # Toks pats automatinis atsarginis OCR ir antrajam preparatui.
+        # Vykdomas tik vieną kartą naujai nuotraukai, prieš sesijos talpyklą.
+        if should_auto_retry_ocr(second_ocr_text, second_ranked_candidates):
+            with st.spinner("Tikrinami papildomi antros pakuotės pasukimai..."):
+                extra_text, extra_candidates, accepted = retry_ocr_from_package(
+                    second_image, second_ocr_text, second_ranked_candidates
+                )
+            if accepted:
+                second_ocr_text = extra_text
+                second_ranked_candidates = extra_candidates
+                second_ocr_engine = "Automatinis papildomas Tesseract"
 
         # Išsaugome tik antro vaisto OCR rezultatą.
         st.session_state[
