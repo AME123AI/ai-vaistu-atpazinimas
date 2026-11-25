@@ -1137,7 +1137,7 @@ def vvkt_ocr_discrepancies(candidate, detected_strengths, detected_form):
     return problems
 
 
-def show_candidate_verification(candidate, detected_strengths, detected_form, slot):
+def show_candidate_verification(candidate, detected_strengths, detected_form, slot, ocr_name=None):
     """Neužblokuoja rankinio patvirtinimo vien dėl nepatikimo OCR.
 
     Tikras OCR ir VVKT prieštaravimas reikalauja atskiro naudotojo
@@ -1145,7 +1145,7 @@ def show_candidate_verification(candidate, detected_strengths, detected_form, sl
     """
     problems = vvkt_ocr_discrepancies(candidate, detected_strengths, detected_form)
     name = candidate.get("name") or "nenurodyta"
-    if not problems:
+    if not problems and ocr_name == name:
         if not detected_strengths or not detected_form:
             st.caption(
                 "OCR dalies informacijos nenustatė. Tai nėra neatitikimas. "
@@ -1153,6 +1153,18 @@ def show_candidate_verification(candidate, detected_strengths, detected_form, sl
                 "stiprumu ir farmacine forma."
             )
         return True
+    if not problems:
+        st.warning(
+            "OCR nepatvirtino pasirinkto PREKINIO PAVADINIMO. "
+            "Vien veikliosios medžiagos ar stiprumo sutapimo nepakanka "
+            "preparato tapatybei patvirtinti."
+        )
+        return st.checkbox(
+            "Palyginau pakuotės PREKINĮ PAVADINIMĄ, stiprumą ir formą "
+            f"su pasirinktu VVKT įrašu ({name}) – sutampa.",
+            value=False,
+            key=f"{slot}_identity_{hashlib.sha256(repr((name, candidate.get('strength'), candidate.get('form'))).encode()).hexdigest()[:12]}",
+        )
     st.warning(
         "OCR ir pasirinkto VVKT varianto galimas neatitikimas: "
         + ", ".join(problems)
@@ -2184,6 +2196,13 @@ def forms_compatible(ocr_form, vvkt_form):
             return "tabletes"
         return None
 
+    # Geriamasis tirpalas gali būti pakuojamas paketėlyje.
+    # Tikslus vartojimo kelias turi sutapti: injekcinis tirpalas NĖRA
+    # geriamasis tirpalas, todėl jų automatiškai nesutapatiname.
+    oral_solution = "geriamasis tirpalas"
+    if ocr == oral_solution and vvkt.startswith(oral_solution + " "):
+        return True
+
     ocr_category = category(ocr)
     vvkt_category = category(vvkt)
     if not ocr_category or ocr_category != vvkt_category:
@@ -2321,7 +2340,15 @@ def rank_vvkt_candidates(ocr_text, top_n=5):
             })
     # Kai OCR nustatė stiprumą / formą, neprieštaraujantis variantas turi pirmenybę.
     # Kitus variantus paliekame pasirinkimui tik jei nepakanka suderintų kandidatų.
+    # Aiškiai OCR perskaitytas prekinis pavadinimas yra stipresnis
+    # vaisto tapatybės požymis nei vienos veikliosios medžiagos sutapimas.
+    # Pirmumą suteikiame TIK pažodžiui perskaitytam pilnam pavadinimui
+    # ir tik jei nustatytas stiprumas / forma jam neprieštarauja.
+    explicit_name = ocr_read_brand_name(ocr_text, vvkt_names)
     results.sort(key=lambda r: (
+        1 if explicit_name == r["name"]
+           and r["ocr_strength_match"] is not False
+           and r["ocr_form_match"] is not False else 0,
         1 if r["ocr_strength_match"] is True else (0 if r["ocr_strength_match"] is None else -1),
         1 if r["ocr_form_match"] is True else (0 if r["ocr_form_match"] is None else -1),
         r["score"], r["name_score"]
@@ -2704,7 +2731,8 @@ if uploaded:
         )
 
         first_confirmed_by_user = show_candidate_verification(
-            candidate, strengths, detected_form, "first"
+            candidate, strengths, detected_form, "first",
+            ocr_read_brand_name(ocr_text, vvkt_names)
         )
         if st.button(
             "✅ Patvirtinti preparatą",
@@ -3175,7 +3203,8 @@ if second_uploaded:
         )
 
         second_confirmed_by_user = show_candidate_verification(
-            second_candidate, second_strengths, second_detected_form, "second"
+            second_candidate, second_strengths, second_detected_form, "second",
+            ocr_read_brand_name(second_ocr_text, vvkt_names)
         )
         if st.button(
             "✅ Patvirtinti antrą preparatą",
