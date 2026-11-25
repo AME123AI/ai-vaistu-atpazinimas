@@ -988,7 +988,9 @@ def retry_ocr_from_package(image, previous_text, previous_candidates, automatic=
     base = prepare_fast_ocr_image(image)
     variants = [(base, 0)]
     # Trumpa seka automatikai; platesnė – paspaudus papildomą OCR mygtuką.
-    angles = (25, -25, 35, -35) if automatic else (25, -25, 15, -15, 35, -35)
+    # Tie patys pasvirimo kampai naudojami ir automatiniame OCR.
+    # Ypač ±15° trūko pasvirusių pakuočių (pvz., Sinupret) nuskaitymui.
+    angles = (15, -15, 25, -25, 35, -35)
     variants.extend((base, angle) for angle in angles)
     if not automatic and min(base.size) >= 180:
         width, height = base.size
@@ -1052,8 +1054,9 @@ def recognize_package_once(image, image_bytes, slot):
     """
     image_hash = hashlib.sha256(image_bytes).hexdigest()
     shared = st.session_state.setdefault('ocr_shared_by_image', {})
-    if image_hash in shared:
-        cached = shared[image_hash]
+    shared_key = 'angles15-v1:' + image_hash
+    if shared_key in shared:
+        cached = shared[shared_key]
         return cached[0], cached[1], cached[2], image_hash
 
     fast = run_fast_ocr(image)
@@ -1085,7 +1088,7 @@ def recognize_package_once(image, image_bytes, slot):
             result_text, result_candidates = improved_text, improved_candidates
             engine = 'Automatinis pasukimo OCR'
 
-    shared[image_hash] = (result_text, result_candidates, engine)
+    shared[shared_key] = (result_text, result_candidates, engine)
     return result_text, result_candidates, engine, image_hash
 
 
@@ -2591,7 +2594,7 @@ if uploaded:
                 st.session_state["ocr_text_cached"] = ocr_text
                 st.session_state["ocr_candidates_cached"] = ranked_candidates
                 st.session_state["ocr_engine_cached"] = ocr_engine
-                st.session_state.setdefault("ocr_shared_by_image", {})[image_key] = (
+                st.session_state.setdefault("ocr_shared_by_image", {})["angles15-v1:" + image_key] = (
                     ocr_text, ranked_candidates, ocr_engine
                 )
                 st.session_state.pop("ocr_candidate", None)
@@ -2954,7 +2957,7 @@ if second_uploaded:
                 st.session_state["second_ocr_text_cached"] = second_ocr_text
                 st.session_state["second_ocr_candidates_cached"] = second_ranked_candidates
                 st.session_state["second_ocr_engine_cached"] = second_ocr_engine
-                st.session_state.setdefault("ocr_shared_by_image", {})[second_image_key] = (
+                st.session_state.setdefault("ocr_shared_by_image", {})["angles15-v1:" + second_image_key] = (
                     second_ocr_text, second_ranked_candidates, second_ocr_engine
                 )
                 st.session_state.pop("second_ocr_candidate", None)
