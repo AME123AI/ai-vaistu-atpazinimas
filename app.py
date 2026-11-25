@@ -1492,7 +1492,10 @@ def detect_ingredient(text):
 
         if (
             len(ing_norm) >= 5
-            and ing_norm in ocr_norm
+            and re.search(
+                r"(?<![a-z0-9])" + re.escape(ing_norm) + r"(?![a-z0-9])",
+                ocr_norm,
+            )
         ):
 
             exact.append(
@@ -1510,61 +1513,10 @@ def detect_ingredient(text):
             )
         )
 
-    # ---------------------------------------------
-    # 2. FUZZY VEIKLIOSIOS MEDŽIAGOS PAIEŠKA
-    # ---------------------------------------------
-
-    normalized_map = {
-        normalize_text(x): x
-        for x in ingredients
-    }
-
-    choices = list(
-        normalized_map.keys()
-    )
-
-    best_name = None
-    best_score = 0.0
-
-    fragments = build_ocr_fragments(
-        text
-    )
-
-    for fragment in fragments:
-
-        # Labai trumpi fragmentai sukelia
-        # per daug klaidingų atitikimų
-        if len(fragment) < 5:
-            continue
-
-        matches = get_close_matches(
-            fragment,
-            choices,
-            n=1,
-            cutoff=0.82
-        )
-
-        if not matches:
-            continue
-
-        match = matches[0]
-
-        score = similarity(
-            fragment,
-            match
-        )
-
-        if score > best_score:
-
-            best_score = score
-
-            best_name = (
-                normalized_map[
-                    match
-                ]
-            )
-
-    return best_name
+    # Veikliosios medžiagos nespėjame pagal panašų žodį.
+    # Pvz. „ketoprofenas“ nėra tas pats, kas „deksketoprofenas“.
+    # Jei tikslaus OCR įrodymo nėra, geriau rodyti „nenustatyta“.
+    return None
 
 # =========================================================
 # OCR PAVADINIMO KANDIDATAI – PATOBULINTA VERSIJA
@@ -2183,38 +2135,29 @@ def ingredient_score(
     # Tikslus veikliosios medžiagos tekstas
     if (
         len(ing) >= 5
-        and ing in text
+        and re.search(r"(?<![a-z0-9])" + re.escape(ing) + r"(?![a-z0-9])", text)
     ):
         return 1.0
 
-    best = 0.0
+    # Fuzzy ingredientų balai klaidino: ketoprofenas ir
+    # deksketoprofenas gali gauti ~97 %, nors tai ne ta pati medžiaga.
+    # Tiksliai neperskaičius veikliosios medžiagos, balas lieka 0 %.
+    return 0.0
 
-    for fragment in build_ocr_fragments(
-        ocr_text
-    ):
 
-        # Neleidžiame trumpiems OCR žodžiams,
-        # pvz. atsitiktiniam "magnis",
-        # sukurti labai stipraus įrodymo
-        if len(fragment) < 7:
-            continue
+def ingredient_ocr_conflict(ocr_ingredient, vvkt_ingredient):
+    """OCR medžiagos ir VVKT sudėties nesutapimo signalas, ne diagnozė.
 
-        score = similarity(
-            ing,
-            fragment
-        )
-
-        best = max(
-            best,
-            score
-        )
-
-    # Ingredientų fuzzy matching turi būti
-    # daug griežtesnis nei anksčiau.
-    if best < 0.78:
-        return 0.0
-
-    return best
+    Sudėtinio preparato vienas perskaitytas komponentas nelaikomas klaida.
+    Vis dėlto panašiai skambančios skirtingos medžiagos nesutapatinamos.
+    """
+    a = normalize_text(ocr_ingredient)
+    b = normalize_text(vvkt_ingredient)
+    if not a or not b or a == '—' or b == '—':
+        return False
+    if a == b:
+        return False
+    return not bool(re.search(r"(?<![a-z0-9])" + re.escape(a) + r"(?![a-z0-9])", b))
 
 
 def forms_compatible(ocr_form, vvkt_form):
@@ -2801,7 +2744,8 @@ if uploaded:
         ]
 
         if (ocr_read_brand_name(ocr_text, vvkt_names) == candidate.get("name")
-                and float(candidate.get("score", 0)) >= 0.75):
+                and float(candidate.get("score", 0)) >= 0.75
+                and not ingredient_ocr_conflict(detected_ingredient, candidate["ingredient"])):
             st.success(f"💊 VVKT kandidatas (patikrinkite): **{candidate['name']}**")
         else:
             st.warning(f"VVKT paieškos pasiūlymas, tapatybė nepatvirtinta: **{candidate['name']}**")
@@ -2822,6 +2766,14 @@ if uploaded:
             "Veiklioji medžiaga",
             f"{candidate['ingredient_score'] * 100:.0f}%"
         )
+
+        if ingredient_ocr_conflict(detected_ingredient, candidate["ingredient"]):
+            st.warning(
+                "OCR galimai perskaitė kitą veikliąją medžiagą: "
+                f"{detected_ingredient}. VVKT nurodo: {candidate['ingredient']}. "
+                "Šių pavadinimų nesutapatinkite – prieš patvirtindami "
+                "patikrinkite pakuotės sudėtį."
+            )
 
         st.write(
             "**Veiklioji medžiaga:**",
@@ -3292,7 +3244,8 @@ if second_uploaded:
         ]
 
         if (ocr_read_brand_name(second_ocr_text, vvkt_names) == second_candidate.get("name")
-                and float(second_candidate.get("score", 0)) >= 0.75):
+                and float(second_candidate.get("score", 0)) >= 0.75
+                and not ingredient_ocr_conflict(second_detected_ingredient, second_candidate["ingredient"])):
             st.success(f"💊 VVKT kandidatas (patikrinkite): **{second_candidate['name']}**")
         else:
             st.warning(f"VVKT paieškos pasiūlymas, tapatybė nepatvirtinta: **{second_candidate['name']}**")
@@ -3313,6 +3266,14 @@ if second_uploaded:
             "Veiklioji medžiaga",
             f"{second_candidate['ingredient_score'] * 100:.0f}%"
         )
+
+        if ingredient_ocr_conflict(second_detected_ingredient, second_candidate["ingredient"]):
+            st.warning(
+                "OCR galimai perskaitė kitą veikliąją medžiagą: "
+                f"{second_detected_ingredient}. VVKT nurodo: {second_candidate['ingredient']}. "
+                "Šių pavadinimų nesutapatinkite – prieš patvirtindami "
+                "patikrinkite pakuotės sudėtį."
+            )
 
         st.write(
             "**Veiklioji medžiaga (VVKT kandidatas, dar nepatvirtinta):**",
