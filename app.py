@@ -961,7 +961,7 @@ def run_ocr(image):
     """
     return run_fast_ocr(image)
 
-def retry_ocr_from_package(image, previous_text, previous_candidates):
+def retry_ocr_from_package(image, previous_text, previous_candidates, automatic=False):
     """Pakartotinis OCR su pasvirimo korekcija; pradinis rezultatas saugomas.
 
     Skaito tik pareikalavus naudotojui. Priimamas tik VVKT kandidatas,
@@ -984,11 +984,11 @@ def retry_ocr_from_package(image, previous_text, previous_candidates):
     # Baltas fonas pasukant svarbus, kad Tesseract neskaitytų juodų kampų.
     # PSM 11 skaito išsklaidytus užrašus, PSM 6 – pavadinimo eilutę.
     variants = [(base, 0)]
-    for angle in (25, -25, 15, -15, 35, -35):
+    for angle in ((25, -25, 35, -35) if automatic else (25, -25, 15, -15, 35, -35)):
         variants.append((base, angle))
     # Jei visas kadras nepadeda, patikriname tik centrinę dalį (be stalo).
     w, h = base.size
-    if min(w, h) >= 180:
+    if not automatic and min(w, h) >= 180:
         region = base.crop((int(w * 0.07), int(h * 0.07),
                             int(w * 0.93), int(h * 0.93)))
         variants.extend((region, angle) for angle in (25, -25, 35, -35))
@@ -1011,7 +1011,7 @@ def retry_ocr_from_package(image, previous_text, previous_candidates):
                  max(1, int(gray.height * scale))),
                 Image.Resampling.LANCZOS,
             )
-        for psm in (11, 6):
+        for psm in ((11,) if automatic else (11, 6)):
             try:
                 text = pytesseract.image_to_string(
                     gray, config=f"--psm {psm}", timeout=8
@@ -1042,8 +1042,6 @@ def retry_ocr_from_package(image, previous_text, previous_candidates):
                     continue
                 if float(candidate.get("name_score", 0)) < 0.90:
                     continue
-                if float(candidate.get("score", 0)) < 0.55:
-                    continue
                 if candidate.get("ocr_strength_match") is False:
                     continue
                 if candidate.get("ocr_form_match") is False:
@@ -1062,11 +1060,75 @@ def retry_ocr_from_package(image, previous_text, previous_candidates):
                     best = (score, text, chosen_first)
             # Aukšto patikimumo pilnas pavadinimo sutapimas – baigiame,
             # kad nereikėtų veltui vykdyti visų nuskaitymo variantų.
-            if best is not None and best[0] >= 0.95:
+            if best is not None and (best[0] >= 0.95 or automatic):
                 return best[1], best[2], True
     if best is None:
         return previous_text, previous_candidates, False
     return best[1], best[2], True
+
+
+
+def recognize_package_once(image, image_bytes, slot):
+    """Vienoda pirmos ir antros pakuotės OCR eiga.
+
+    Vienam nuotraukos turiniui išsaugomas tas pats rezultatas abiem įkėlimo
+    laukams. Nenaudojame papildomo OCR, jeigu jau turime aiškų pilną prekės
+    pavadinimą be skaitinio stiprumo ar farmacinės formos prieštaravimo.
+    """
+    image_hash = hashlib.sha256(image_bytes).hexdigest()
+    shared = st.session_state.setdefault("ocr_shared_by_image", {})
+    if image_hash in shared:
+        cached = shared[image_hash]
+        return cached[0], cached[1], cached[2], image_hash
+
+    fast = run_fast_ocr(image)
+    ranked_fast = rank_vvkt_candidates(fast, top_n=5)
+    text = fast
+    candidates = ranked_fast
+    engine = "Tesseract"
+
+    def confirmed_brand(ocr_text, suggestions):
+        brand = ocr_read_brand_name(ocr_text, vvkt_names)
+        if not brand:
+            return False
+        return any(
+            c.get("name") == brand
+            and c.get("ocr_strength_match") is not False
+            and c.get("ocr_form_match") is not False
+            for c in (suggestions or [])
+        )
+
+    if not confirmed_brand(text, candidates):
+        paddle = run_paddle_ocr(image)
+        if paddle:
+            combined = "\n".join(dict.fromkeys(part for part in (fast, paddle) if part))
+            combined_candidates = rank_vvkt_candidates(combined, top_n=5)
+            # Nesaugome naujo OCR, jei jis pablogintų jau tikslų vardą.
+            if not confirmed_brand(text, candidates) or confirmed_brand(combined, combined_candidates):
+                text, candidates = combined, combined_candidates
+                engine = "Tesseract + PaddleOCR"
+
+    # Tik kai pilnas prekės ženklas vis dar neaptiktas; ribotas OCR pasukimų
+    # skaičius dėl Streamlit Cloud atminties ir vykdymo trukmės.
+    if not confirmed_brand(text, candidates):
+        better_text, better_candidates, found = retry_ocr_from_package(
+            image, text, candidates, automatic=True
+        )
+        if found:
+            # Saugome papildomą tekstą ir pradinį OCR, kad neprapultų
+            # jau nuskaitytos dozės. Kandidatus perskaičiuojame vieną kartą.
+            merged = "\n".join(dict.fromkeys(
+                part for part in (text, better_text) if part
+            ))
+            merged_candidates = rank_vvkt_candidates(merged, top_n=5)
+            if confirmed_brand(merged, merged_candidates):
+                text, candidates = merged, merged_candidates
+            else:
+                text, candidates = better_text, better_candidates
+            engine = "Tesseract + automatinis pasukimo OCR"
+
+    shared[image_hash] = (text, candidates, engine)
+    return text, candidates, engine, image_hash
 
 
 
@@ -2545,128 +2607,24 @@ if uploaded:
         "ocr_image_key"
     )
 
-    # OCR atliekame tik tada, kai įkelta nauja nuotrauka.
+    # Abu įkėlimo laukai naudoja VIENĄ OCR funkciją ir bendrą
+    # rezultatų talpyklą pagal tikslius nuotraukos baitus.
     if cached_key != image_key:
         st.session_state["first_vvkt_drug"] = None
         st.session_state["first_vvkt_selected"] = None
         st.session_state.pop("ocr_candidate", None)
-
-        with st.spinner(
-            "Analizuojama pakuotė..."
-        ):
-
-            # =============================================
-            # 1 ETAPAS – GREITAS TESSERACT
-            # =============================================
-
-            fast_ocr_text = run_fast_ocr(
-                image
+        with st.spinner("Analizuojama pirmo vaisto pakuotė..."):
+            ocr_text, ranked_candidates, ocr_engine, _ = recognize_package_once(
+                image, uploaded_bytes, "first"
             )
-
-            fast_candidates = rank_vvkt_candidates(
-                fast_ocr_text,
-                top_n=5
-            )
-
-            fast_is_strong = False
-
-            if fast_candidates:
-
-                top_fast = fast_candidates[0]
-
-                fast_is_strong = (
-                    top_fast["name_score"] >= 0.90
-                    and top_fast["score"] >= 0.75
-                )
-
-            # =============================================
-            # JEI TESSERACT PAKANKAMAI STIPRUS – STOP
-            # =============================================
-
-            if fast_is_strong:
-
-                ocr_text = fast_ocr_text
-                ranked_candidates = fast_candidates
-                ocr_engine = "Tesseract"
-
-            else:
-
-                # =========================================
-                # 2 ETAPAS – PADDLEOCR
-                # =========================================
-
-                paddle_text = run_paddle_ocr(
-                    image
-                )
-
-                combined_parts = []
-
-                if fast_ocr_text:
-                    combined_parts.append(
-                        fast_ocr_text
-                    )
-
-                if paddle_text:
-                    combined_parts.append(
-                        paddle_text
-                    )
-
-                ocr_text = "\n".join(
-                    dict.fromkeys(
-                        combined_parts
-                    )
-                )
-
-                ranked_candidates = rank_vvkt_candidates(
-                    ocr_text,
-                    top_n=5
-                )
-
-                if paddle_text:
-                    ocr_engine = "Tesseract + PaddleOCR"
-                else:
-                    ocr_engine = "Tesseract"
-
-        # =============================================
-        # IŠSAUGOME ŠIOS NUOTRAUKOS REZULTATĄ
-        # =============================================
-
-        st.session_state[
-            "ocr_image_key"
-        ] = image_key
-
-        st.session_state[
-            "ocr_text_cached"
-        ] = ocr_text
-
-        st.session_state[
-            "ocr_candidates_cached"
-        ] = ranked_candidates
-
-        st.session_state[
-            "ocr_engine_cached"
-        ] = ocr_engine
-
+        st.session_state["ocr_image_key"] = image_key
+        st.session_state["ocr_text_cached"] = ocr_text
+        st.session_state["ocr_candidates_cached"] = ranked_candidates
+        st.session_state["ocr_engine_cached"] = ocr_engine
     else:
-
-        # =============================================
-        # TA PATI NUOTRAUKA – OCR NEKARTOJAME
-        # =============================================
-
-        ocr_text = st.session_state.get(
-            "ocr_text_cached",
-            ""
-        )
-
-        ranked_candidates = st.session_state.get(
-            "ocr_candidates_cached",
-            []
-        )
-
-        ocr_engine = st.session_state.get(
-            "ocr_engine_cached",
-            "Tesseract"
-        )
+        ocr_text = st.session_state.get("ocr_text_cached", "")
+        ranked_candidates = st.session_state.get("ocr_candidates_cached", [])
+        ocr_engine = st.session_state.get("ocr_engine_cached", "Tesseract")
 
     # Pasirenkamas, saugus pakartotinis OCR: ankstesnio rezultato nekeičia,
     # kol neaptiktas aiškus VVKT pavadinimas be prieštaravimų.
@@ -2682,6 +2640,9 @@ if uploaded:
                 st.session_state["ocr_text_cached"] = ocr_text
                 st.session_state["ocr_candidates_cached"] = ranked_candidates
                 st.session_state["ocr_engine_cached"] = ocr_engine
+                st.session_state.setdefault("ocr_shared_by_image", {})[image_key] = (
+                    ocr_text, ranked_candidates, ocr_engine
+                )
                 st.session_state.pop("ocr_candidate", None)
                 st.success("Papildomas OCR rado aiškesnį VVKT pavadinimą. Patikrinkite kandidatą.")
             else:
@@ -3023,125 +2984,24 @@ if second_uploaded:
         "second_ocr_image_key"
     )
 
-    # OCR vykdome tik naujai antro vaisto nuotraukai.
+    # Ta pati OCR funkcija kaip pirmam vaistui, tik atskira
+    # patvirtinimo ir pasirinkimo sesijos būsena.
     if second_cached_key != second_image_key:
         st.session_state.pop("second_ocr_candidate", None)
-
-        with st.spinner(
-            "Analizuojama antro vaisto pakuotė..."
-        ):
-
-            # 1 etapas – greitas Tesseract
-            second_fast_text = run_fast_ocr(
-                second_image
-            )
-
-            second_fast_candidates = rank_vvkt_candidates(
-                second_fast_text,
-                top_n=5
-            )
-
-            second_fast_is_strong = False
-
-            if second_fast_candidates:
-
-                second_top_fast = second_fast_candidates[0]
-
-                second_fast_is_strong = (
-                    second_top_fast["name_score"] >= 0.90
-                    and second_top_fast["score"] >= 0.75
-                )
-
-            if second_fast_is_strong:
-
-                second_ocr_text = second_fast_text
-
-                second_ranked_candidates = (
-                    second_fast_candidates
-                )
-
-                second_ocr_engine = "Tesseract"
-
-            else:
-
-                # 2 etapas – PaddleOCR
-                second_paddle_text = run_paddle_ocr(
-                    second_image
-                )
-
-                second_combined_parts = []
-
-                if second_fast_text:
-                    second_combined_parts.append(
-                        second_fast_text
-                    )
-
-                if second_paddle_text:
-                    second_combined_parts.append(
-                        second_paddle_text
-                    )
-
-                second_ocr_text = "\n".join(
-                    dict.fromkeys(
-                        second_combined_parts
-                    )
-                )
-
-                second_ranked_candidates = (
-                    rank_vvkt_candidates(
-                        second_ocr_text,
-                        top_n=5
-                    )
-                )
-
-                if second_paddle_text:
-                    second_ocr_engine = (
-                        "Tesseract + PaddleOCR"
-                    )
-                else:
-                    second_ocr_engine = "Tesseract"
-
-        # Išsaugome tik antro vaisto OCR rezultatą.
-        st.session_state[
-            "second_ocr_image_key"
-        ] = second_image_key
-
-        st.session_state[
-            "second_ocr_text_cached"
-        ] = second_ocr_text
-
-        st.session_state[
-            "second_ocr_candidates_cached"
-        ] = second_ranked_candidates
-
-        st.session_state[
-            "second_ocr_engine_cached"
-        ] = second_ocr_engine
-
-        # Nauja antro vaisto nuotrauka panaikina ankstesnį
-        # patvirtintą antrą preparatą.
-        st.session_state[
-            "second_vvkt_drug"
-        ] = None
+        st.session_state["second_vvkt_drug"] = None
         st.session_state["second_vvkt_selected"] = None
-
+        with st.spinner("Analizuojama antro vaisto pakuotė..."):
+            second_ocr_text, second_ranked_candidates, second_ocr_engine, _ = recognize_package_once(
+                second_image, second_bytes, "second"
+            )
+        st.session_state["second_ocr_image_key"] = second_image_key
+        st.session_state["second_ocr_text_cached"] = second_ocr_text
+        st.session_state["second_ocr_candidates_cached"] = second_ranked_candidates
+        st.session_state["second_ocr_engine_cached"] = second_ocr_engine
     else:
-
-        # Ta pati nuotrauka – OCR nekartojame.
-        second_ocr_text = st.session_state.get(
-            "second_ocr_text_cached",
-            ""
-        )
-
-        second_ranked_candidates = st.session_state.get(
-            "second_ocr_candidates_cached",
-            []
-        )
-
-        second_ocr_engine = st.session_state.get(
-            "second_ocr_engine_cached",
-            "Tesseract"
-        )
+        second_ocr_text = st.session_state.get("second_ocr_text_cached", "")
+        second_ranked_candidates = st.session_state.get("second_ocr_candidates_cached", [])
+        second_ocr_engine = st.session_state.get("second_ocr_engine_cached", "Tesseract")
 
     if st.session_state.get("second_vvkt_drug") is None:
         if st.button("🔁 Pakartoti išsamesnį antros pakuotės OCR", key="retry_second_ocr"):
@@ -3155,6 +3015,9 @@ if second_uploaded:
                 st.session_state["second_ocr_text_cached"] = second_ocr_text
                 st.session_state["second_ocr_candidates_cached"] = second_ranked_candidates
                 st.session_state["second_ocr_engine_cached"] = second_ocr_engine
+                st.session_state.setdefault("ocr_shared_by_image", {})[second_image_key] = (
+                    second_ocr_text, second_ranked_candidates, second_ocr_engine
+                )
                 st.session_state.pop("second_ocr_candidate", None)
                 st.success("Papildomas OCR rado aiškesnį VVKT pavadinimą. Patikrinkite kandidatą.")
             else:
