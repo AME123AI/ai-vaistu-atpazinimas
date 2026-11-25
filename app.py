@@ -961,174 +961,132 @@ def run_ocr(image):
     """
     return run_fast_ocr(image)
 
-def retry_ocr_from_package(image, previous_text, previous_candidates, automatic=False):
-    """Pakartotinis OCR su pasvirimo korekcija; pradinis rezultatas saugomas.
+def _ocr_full_name_evidence(text, candidates):
+    """True only for a complete brand literally present in OCR, not fuzzy score."""
+    brand = ocr_read_brand_name(text, vvkt_names)
+    if not brand:
+        return False
+    return any(
+        candidate.get("name") == brand
+        and candidate.get("ocr_strength_match") is not False
+        and candidate.get("ocr_form_match") is not False
+        for candidate in (candidates or [])
+    )
 
-    Skaito tik pareikalavus naudotojui. Priimamas tik VVKT kandidatas,
-    kurio pilnas prekės pavadinimas pažodžiui perskaitytas iš vaizdo.
-    Taip vien veikliosios medžiagos sutapimas netampa vaisto tapatybe.
+
+def retry_ocr_from_package(image, previous_text, previous_candidates, automatic=False):
+    """Atsarginis OCR: vienas geriausias vaizdo skaitymas, be triukšmo sujungimo.
+
+    Iš esmės nekeičiame VVKT reitingavimo ar medicininių išvadų.
+    Automatinis kelias naudoja PSM 11 ir 6, o ne vien 11, ir tuos pačius
+    pasvirusius vaizdus abiem pakuotėms. Rezultatas priimamas TIK jei tikras
+    VVKT prekės pavadinimas pilnai aptiktas OCR tekste ir nėra prieštaravimų.
     """
-    # Jei senasis OCR jau tiksliai perskaitė preparato pavadinimą,
-    # jo nekeičiam. Tai apsaugo Ibuprom, Panadol ir kitus gerus atvejus.
-    previous_normalized = normalize_text(previous_text)
-    for old in previous_candidates or []:
-        old_name = normalize_text(old.get("name", ""))
-        if len(old_name) >= 5 and re.search(
-            r"(?<![a-z0-9])" + re.escape(old_name) + r"(?![a-z0-9])",
-            previous_normalized,
-        ) and float(old.get("name_score", 0)) >= 0.90:
-            return previous_text, previous_candidates, False
+    if _ocr_full_name_evidence(previous_text, previous_candidates):
+        return previous_text, previous_candidates, False
 
     base = prepare_fast_ocr_image(image)
-    # Lietuviškų vaistų pakuočių nuotraukos dažnai pasvirusios 15–35°.
-    # Baltas fonas pasukant svarbus, kad Tesseract neskaitytų juodų kampų.
-    # PSM 11 skaito išsklaidytus užrašus, PSM 6 – pavadinimo eilutę.
     variants = [(base, 0)]
-    for angle in ((25, -25, 35, -35) if automatic else (25, -25, 15, -15, 35, -35)):
-        variants.append((base, angle))
-    # Jei visas kadras nepadeda, patikriname tik centrinę dalį (be stalo).
-    w, h = base.size
-    if not automatic and min(w, h) >= 180:
-        region = base.crop((int(w * 0.07), int(h * 0.07),
-                            int(w * 0.93), int(h * 0.93)))
-        variants.extend((region, angle) for angle in (25, -25, 35, -35))
+    # Trumpa seka automatikai; platesnė – paspaudus papildomą OCR mygtuką.
+    angles = (25, -25, 35, -35) if automatic else (25, -25, 15, -15, 35, -35)
+    variants.extend((base, angle) for angle in angles)
+    if not automatic and min(base.size) >= 180:
+        width, height = base.size
+        crop = base.crop((int(width * .07), int(height * .07),
+                          int(width * .93), int(height * .93)))
+        variants.extend((crop, a) for a in (25, -25, 35, -35))
 
-    previous_best_score = max(
-        (float(x.get("score", 0)) for x in (previous_candidates or [])),
-        default=0.0,
-    )
     best = None
+    # Pirmoji tiksliai perskaityta prekės pavadinimo eilutė yra pakankama
+    # kandidatų PASIŪLYMUI. Stiprumas ir forma vis dar tikrinami rankiniu būdu.
     for region, angle in variants:
         if angle:
             region = region.rotate(angle, expand=True, fillcolor=(255, 255, 255))
         gray = ImageOps.autocontrast(ImageOps.grayscale(region))
-        # Teksto raidės turi būti pakankamo dydžio, bet ribojame RAM.
-        longest = max(gray.size)
-        if longest < 1450:
-            scale = min(2.0, 1450.0 / max(1, longest))
-            gray = gray.resize(
-                (max(1, int(gray.width * scale)),
-                 max(1, int(gray.height * scale))),
-                Image.Resampling.LANCZOS,
-            )
-        for psm in ((11,) if automatic else (11, 6)):
+        if max(gray.size) < 1400:
+            scale = min(2.0, 1400 / max(gray.size))
+            gray = gray.resize((max(1, int(gray.width * scale)),
+                                max(1, int(gray.height * scale))),
+                               Image.Resampling.LANCZOS)
+        for psm in (11, 6):
             try:
-                text = pytesseract.image_to_string(
+                found_text = pytesseract.image_to_string(
                     gray, config=f"--psm {psm}", timeout=8
                 ).strip()
             except Exception:
                 continue
-            if not text:
+            if not found_text:
                 continue
-            normalized = normalize_text(text)
-            # Pirmiausia ieškome TIK pilnai perskaitytų prekės pavadinimų.
-            # Nekviečiame brangios VVKT analizės atsitiktiniam OCR triukšmui.
-            tokens = set(normalized.split())
-            exact_names = []
-            for name in vvkt_names:
-                clean_name = normalize_text(name)
-                if len(clean_name) < 5 or clean_name.split()[0] not in tokens:
-                    continue
-                if re.search(
-                    r"(?<![a-z0-9])" + re.escape(clean_name) + r"(?![a-z0-9])",
-                    normalized,
-                ):
-                    exact_names.append(name)
-            if not exact_names:
+            # Esminis saugiklis: nestatome naujo kandidato iš bendro
+            # atsitiktinių OCR variantų teksto. Vertiname kiekvieną atskirai.
+            exact_brand = ocr_read_brand_name(found_text, vvkt_names)
+            if not exact_brand:
                 continue
-            candidates = rank_vvkt_candidates(text, top_n=5)
-            for candidate in candidates:
-                if candidate.get("name") not in exact_names:
-                    continue
-                if float(candidate.get("name_score", 0)) < 0.90:
-                    continue
-                if candidate.get("ocr_strength_match") is False:
-                    continue
-                if candidate.get("ocr_form_match") is False:
-                    continue
-                score = float(candidate.get("score", 0))
-                # Nekeisti ankstesnio bent jau pakankamai gero rezultato
-                # kitu vaistu, ypač dėl vieno atsitiktinio OCR fragmento.
-                # Senasis kandidatas gali turėti aukštą balą vien dėl
-                # veikliosios medžiagos (pvz., Pantoprazole-Mepha).
-                # Pilnas kito pavadinimo OCR įrodymas turi pirmenybę;
-                # tiksliai perskaityti seni pavadinimai apsaugoti aukščiau.
-                if best is None or score > best[0]:
-                    chosen_first = [candidate] + [
-                        x for x in candidates if x is not candidate
-                    ]
-                    best = (score, text, chosen_first)
-            # Aukšto patikimumo pilnas pavadinimo sutapimas – baigiame,
-            # kad nereikėtų veltui vykdyti visų nuskaitymo variantų.
-            if best is not None and (best[0] >= 0.95 or automatic):
+            candidates = rank_vvkt_candidates(found_text, top_n=8)
+            if not _ocr_full_name_evidence(found_text, candidates):
+                continue
+            match = next(c for c in candidates if c.get('name') == exact_brand)
+            # Algoritmo bendras balas NĖRA nuskaityto pavadinimo įrodymas:
+            # net 46 % turintis Olfen gali turėti tikslų 100 % pavadinimą.
+            strength = 1 if match.get('ocr_strength_match') is True else 0
+            form = 1 if match.get('ocr_form_match') is True else 0
+            quality = (strength + form, float(match.get('name_score', 0)),
+                       float(match.get('score', 0)))
+            if best is None or quality > best[0]:
+                ordered = [match] + [c for c in candidates if c is not match]
+                best = (quality, found_text, ordered)
+            # Atpažinus pavadinimą ir bent vieną kitą požymį, sustojame:
+            # taip sumažiname RAM ir laiko sąnaudas Streamlit Cloud.
+            if strength or form:
                 return best[1], best[2], True
     if best is None:
         return previous_text, previous_candidates, False
     return best[1], best[2], True
 
 
-
 def recognize_package_once(image, image_bytes, slot):
-    """Vienoda pirmos ir antros pakuotės OCR eiga.
+    """Ta pati OCR funkcija abiem įkėlimo vietoms ir bendra turinio talpykla.
 
-    Vienam nuotraukos turiniui išsaugomas tas pats rezultatas abiem įkėlimo
-    laukams. Nenaudojame papildomo OCR, jeigu jau turime aiškų pilną prekės
-    pavadinimą be skaitinio stiprumo ar farmacinės formos prieštaravimo.
+    Šios sesijos metu tas pats įkelto vaizdo failas nebeskaitomas atsitiktinai
+    dar kartą; tiek pirmam, tiek antram laukui grąžinamas tas pats rezultatas.
     """
     image_hash = hashlib.sha256(image_bytes).hexdigest()
-    shared = st.session_state.setdefault("ocr_shared_by_image", {})
+    shared = st.session_state.setdefault('ocr_shared_by_image', {})
     if image_hash in shared:
         cached = shared[image_hash]
         return cached[0], cached[1], cached[2], image_hash
 
     fast = run_fast_ocr(image)
-    ranked_fast = rank_vvkt_candidates(fast, top_n=5)
-    text = fast
-    candidates = ranked_fast
-    engine = "Tesseract"
+    fast_candidates = rank_vvkt_candidates(fast, top_n=8)
+    result_text, result_candidates, engine = fast, fast_candidates, 'Tesseract'
 
-    def confirmed_brand(ocr_text, suggestions):
-        brand = ocr_read_brand_name(ocr_text, vvkt_names)
-        if not brand:
-            return False
-        return any(
-            c.get("name") == brand
-            and c.get("ocr_strength_match") is not False
-            and c.get("ocr_form_match") is not False
-            for c in (suggestions or [])
-        )
-
-    if not confirmed_brand(text, candidates):
-        paddle = run_paddle_ocr(image)
-        if paddle:
-            combined = "\n".join(dict.fromkeys(part for part in (fast, paddle) if part))
-            combined_candidates = rank_vvkt_candidates(combined, top_n=5)
-            # Nesaugome naujo OCR, jei jis pablogintų jau tikslų vardą.
-            if not confirmed_brand(text, candidates) or confirmed_brand(combined, combined_candidates):
-                text, candidates = combined, combined_candidates
-                engine = "Tesseract + PaddleOCR"
-
-    # Tik kai pilnas prekės ženklas vis dar neaptiktas; ribotas OCR pasukimų
-    # skaičius dėl Streamlit Cloud atminties ir vykdymo trukmės.
-    if not confirmed_brand(text, candidates):
-        better_text, better_candidates, found = retry_ocr_from_package(
-            image, text, candidates, automatic=True
-        )
-        if found:
-            # Saugome papildomą tekstą ir pradinį OCR, kad neprapultų
-            # jau nuskaitytos dozės. Kandidatus perskaičiuojame vieną kartą.
-            merged = "\n".join(dict.fromkeys(
-                part for part in (text, better_text) if part
-            ))
-            merged_candidates = rank_vvkt_candidates(merged, top_n=5)
-            if confirmed_brand(merged, merged_candidates):
-                text, candidates = merged, merged_candidates
+    if not _ocr_full_name_evidence(result_text, result_candidates):
+        paddle_text = run_paddle_ocr(image)
+        if paddle_text:
+            # Jeigu Paddle rado pavadinimą, vertiname jo rezultatus ATŠKIRAI.
+            # Atsitiktinės raidės iš Tesseract neturi sugadinti teisingo vardo.
+            paddle_candidates = rank_vvkt_candidates(paddle_text, top_n=8)
+            if _ocr_full_name_evidence(paddle_text, paddle_candidates):
+                result_text, result_candidates = paddle_text, paddle_candidates
+                engine = 'PaddleOCR'
             else:
-                text, candidates = better_text, better_candidates
-            engine = "Tesseract + automatinis pasukimo OCR"
+                merged = '\n'.join(dict.fromkeys(
+                    part for part in (fast, paddle_text) if part))
+                merged_candidates = rank_vvkt_candidates(merged, top_n=8)
+                if _ocr_full_name_evidence(merged, merged_candidates):
+                    result_text, result_candidates = merged, merged_candidates
+                    engine = 'Tesseract + PaddleOCR'
 
-    shared[image_hash] = (text, candidates, engine)
-    return text, candidates, engine, image_hash
+    if not _ocr_full_name_evidence(result_text, result_candidates):
+        improved_text, improved_candidates, success = retry_ocr_from_package(
+            image, result_text, result_candidates, automatic=True)
+        if success:
+            # Neišsaugome triukšmingo ankstesnio teksto kartu su nauju OCR.
+            result_text, result_candidates = improved_text, improved_candidates
+            engine = 'Automatinis pasukimo OCR'
+
+    shared[image_hash] = (result_text, result_candidates, engine)
+    return result_text, result_candidates, engine, image_hash
 
 
 
