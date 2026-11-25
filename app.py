@@ -979,14 +979,15 @@ def should_auto_retry_ocr(ocr_text, candidates):
     return True
 
 def retry_ocr_from_package(image, previous_text, previous_candidates):
-    """Pakartotinis OCR su pasvirimo korekcija; pradinis rezultatas saugomas.
+    """Atsarginis tikslinio prekės pavadinimo OCR. Nieko nepatvirtina automatiškai.
 
-    Skaito tik pareikalavus naudotojui. Priimamas tik VVKT kandidatas,
-    kurio pilnas prekės pavadinimas pažodžiui perskaitytas iš vaizdo.
-    Taip vien veikliosios medžiagos sutapimas netampa vaisto tapatybe.
+    Konkretaus ženklo, perskaityto iš vaizdo, ieškoma keliuose pasukimuose.
+    Silpnas bendras VVKT balas (pvz. Olfen 46 %) NEGALI atmesti aiškiai
+    perskaityto pavadinimo: silpno balo priežastis gali būti neskaityta forma.
     """
-    # Jei senasis OCR jau tiksliai perskaitė preparato pavadinimą,
-    # jo nekeičiam. Tai apsaugo Ibuprom, Panadol ir kitus gerus atvejus.
+    diagnostic = {"bandyta": 0, "tekstas": 0, "laiko_limitai": 0,
+                  "klaidos": 0, "vardai": 0, "priezastis": ""}
+
     previous_normalized = normalize_text(previous_text)
     for old in previous_candidates or []:
         old_name = normalize_text(old.get("name", ""))
@@ -994,32 +995,28 @@ def retry_ocr_from_package(image, previous_text, previous_candidates):
             r"(?<![a-z0-9])" + re.escape(old_name) + r"(?![a-z0-9])",
             previous_normalized,
         ) and float(old.get("name_score", 0)) >= 0.90:
+            diagnostic["priezastis"] = "Ankstesnis OCR jau perskaitė pilną pavadinimą"
+            st.session_state["ocr_retry_diagnostic"] = diagnostic
             return previous_text, previous_candidates, False
 
     base = prepare_fast_ocr_image(image)
-    # Lietuviškų vaistų pakuočių nuotraukos dažnai pasvirusios 15–35°.
-    # Baltas fonas pasukant svarbus, kad Tesseract neskaitytų juodų kampų.
-    # PSM 11 skaito išsklaidytus užrašus, PSM 6 – pavadinimo eilutę.
     variants = [(base, 0)]
     for angle in (25, -25, 15, -15, 35, -35):
         variants.append((base, angle))
-    # Jei visas kadras nepadeda, patikriname tik centrinę dalį (be stalo).
     w, h = base.size
     if min(w, h) >= 180:
         region = base.crop((int(w * 0.07), int(h * 0.07),
                             int(w * 0.93), int(h * 0.93)))
-        variants.extend((region, angle) for angle in (25, -25, 35, -35))
+        variants.extend((region, angle) for angle in (0, 25, -25, 35, -35))
 
-    previous_best_score = max(
-        (float(x.get("score", 0)) for x in (previous_candidates or [])),
-        default=0.0,
-    )
+    # Stebime geriausią pilną pavadinimą. Kandidatui su neįskaitoma forma
+    # nekeliamas 55 % balo reikalavimas: jis lieka RANKINIAM patikrinimui.
     best = None
+    normalized_names = [(name, normalize_text(name)) for name in vvkt_names]
     for region, angle in variants:
         if angle:
             region = region.rotate(angle, expand=True, fillcolor=(255, 255, 255))
         gray = ImageOps.autocontrast(ImageOps.grayscale(region))
-        # Teksto raidės turi būti pakankamo dydžio, bet ribojame RAM.
         longest = max(gray.size)
         if longest < 1450:
             scale = min(2.0, 1450.0 / max(1, longest))
@@ -1029,58 +1026,66 @@ def retry_ocr_from_package(image, previous_text, previous_candidates):
                 Image.Resampling.LANCZOS,
             )
         for psm in (11, 6):
+            diagnostic["bandyta"] += 1
             try:
                 text = pytesseract.image_to_string(
-                    gray, config=f"--psm {psm}", timeout=8
+                    gray, config=f"--psm {psm}", timeout=10
                 ).strip()
+            except RuntimeError as exc:
+                if "timeout" in str(exc).lower():
+                    diagnostic["laiko_limitai"] += 1
+                else:
+                    diagnostic["klaidos"] += 1
+                continue
             except Exception:
+                diagnostic["klaidos"] += 1
                 continue
             if not text:
                 continue
+            diagnostic["tekstas"] += 1
             normalized = normalize_text(text)
-            # Pirmiausia ieškome TIK pilnai perskaitytų prekės pavadinimų.
-            # Nekviečiame brangios VVKT analizės atsitiktiniam OCR triukšmui.
             tokens = set(normalized.split())
-            exact_names = []
-            for name in vvkt_names:
-                clean_name = normalize_text(name)
+            exact_names = set()
+            for name, clean_name in normalized_names:
                 if len(clean_name) < 5 or clean_name.split()[0] not in tokens:
                     continue
                 if re.search(
                     r"(?<![a-z0-9])" + re.escape(clean_name) + r"(?![a-z0-9])",
                     normalized,
                 ):
-                    exact_names.append(name)
+                    exact_names.add(name)
             if not exact_names:
                 continue
-            candidates = rank_vvkt_candidates(text, top_n=5)
+            diagnostic["vardai"] += 1
+            candidates = rank_vvkt_candidates(text, top_n=10)
             for candidate in candidates:
                 if candidate.get("name") not in exact_names:
                     continue
                 if float(candidate.get("name_score", 0)) < 0.90:
                     continue
-                if float(candidate.get("score", 0)) < 0.55:
-                    continue
+                # Tik tikri prieštaravimai draudžia pasiūlyti variantą.
+                # Nežinoma forma/stiprumas yra None, o ne False.
                 if candidate.get("ocr_strength_match") is False:
                     continue
                 if candidate.get("ocr_form_match") is False:
                     continue
                 score = float(candidate.get("score", 0))
-                # Nekeisti ankstesnio bent jau pakankamai gero rezultato
-                # kitu vaistu, ypač dėl vieno atsitiktinio OCR fragmento.
-                # Senasis kandidatas gali turėti aukštą balą vien dėl
-                # veikliosios medžiagos (pvz., Pantoprazole-Mepha).
-                # Pilnas kito pavadinimo OCR įrodymas turi pirmenybę;
-                # tiksliai perskaityti seni pavadinimai apsaugoti aukščiau.
                 if best is None or score > best[0]:
                     chosen_first = [candidate] + [
                         x for x in candidates if x is not candidate
                     ]
                     best = (score, text, chosen_first)
-            # Aukšto patikimumo pilnas pavadinimo sutapimas – baigiame,
-            # kad nereikėtų veltui vykdyti visų nuskaitymo variantų.
             if best is not None and best[0] >= 0.95:
+                diagnostic["priezastis"] = "Pilnas pavadinimas patikimai perskaitytas"
+                st.session_state["ocr_retry_diagnostic"] = diagnostic
                 return best[1], best[2], True
+
+    diagnostic["priezastis"] = (
+        "Rastas tikslus pavadinimas; VVKT variantą patikrinkite pagal pakuotę"
+        if best is not None else
+        "OCR nepateikė pilno VVKT prekės pavadinimo"
+    )
+    st.session_state["ocr_retry_diagnostic"] = diagnostic
     if best is None:
         return previous_text, previous_candidates, False
     return best[1], best[2], True
@@ -2564,6 +2569,7 @@ if uploaded:
 
     # OCR atliekame tik tada, kai įkelta nauja nuotrauka.
     if cached_key != image_key:
+        st.session_state.pop("first_ocr_diagnostic", None)
         st.session_state["first_vvkt_drug"] = None
         st.session_state["first_vvkt_selected"] = None
         st.session_state.pop("ocr_candidate", None)
@@ -2652,6 +2658,7 @@ if uploaded:
                 extra_text, extra_candidates, accepted = retry_ocr_from_package(
                     image, ocr_text, ranked_candidates
                 )
+            st.session_state["first_ocr_diagnostic"] = st.session_state.get("ocr_retry_diagnostic", {}).copy()
             if accepted:
                 ocr_text, ranked_candidates = extra_text, extra_candidates
                 ocr_engine = "Automatinis papildomas Tesseract"
@@ -2705,6 +2712,7 @@ if uploaded:
                 better_text, better_candidates, improved = retry_ocr_from_package(
                     image, ocr_text, ranked_candidates
                 )
+            st.session_state["first_ocr_diagnostic"] = st.session_state.get("ocr_retry_diagnostic", {}).copy()
             if improved:
                 ocr_text, ranked_candidates = better_text, better_candidates
                 ocr_engine = "Pakartotinis Tesseract"
@@ -2731,6 +2739,14 @@ if uploaded:
         st.caption(
             f"Naudotas OCR: {ocr_engine}"
         )
+        info = st.session_state.get("first_ocr_diagnostic")
+        if info:
+            st.caption(
+                f"Papildomo OCR bandymai: {info['bandyta']}; "
+                f"tekstą grąžino: {info['tekstas']}; "
+                f"laiko limitas: {info['laiko_limitai']}; "
+                f"klaidos: {info['klaidos']}. {info['priezastis']}"
+            )
         st.text(
             ocr_text
             if ocr_text
@@ -3054,6 +3070,7 @@ if second_uploaded:
 
     # OCR vykdome tik naujai antro vaisto nuotraukai.
     if second_cached_key != second_image_key:
+        st.session_state.pop("second_ocr_diagnostic", None)
         st.session_state.pop("second_ocr_candidate", None)
 
         with st.spinner(
@@ -3137,6 +3154,7 @@ if second_uploaded:
                 extra_text, extra_candidates, accepted = retry_ocr_from_package(
                     second_image, second_ocr_text, second_ranked_candidates
                 )
+            st.session_state["second_ocr_diagnostic"] = st.session_state.get("ocr_retry_diagnostic", {}).copy()
             if accepted:
                 second_ocr_text = extra_text
                 second_ranked_candidates = extra_candidates
@@ -3190,6 +3208,7 @@ if second_uploaded:
                 better_text, better_candidates, improved = retry_ocr_from_package(
                     second_image, second_ocr_text, second_ranked_candidates
                 )
+            st.session_state["second_ocr_diagnostic"] = st.session_state.get("ocr_retry_diagnostic", {}).copy()
             if improved:
                 second_ocr_text, second_ranked_candidates = better_text, better_candidates
                 second_ocr_engine = "Pakartotinis Tesseract"
@@ -3220,6 +3239,14 @@ if second_uploaded:
         st.caption(
             f"Naudotas OCR: {second_ocr_engine}"
         )
+        info = st.session_state.get("second_ocr_diagnostic")
+        if info:
+            st.caption(
+                f"Papildomo OCR bandymai: {info['bandyta']}; "
+                f"tekstą grąžino: {info['tekstas']}; "
+                f"laiko limitas: {info['laiko_limitai']}; "
+                f"klaidos: {info['klaidos']}. {info['priezastis']}"
+            )
 
         st.text(
             second_ocr_text
